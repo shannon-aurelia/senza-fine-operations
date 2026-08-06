@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import AuthScreen from "./components/auth-screen";
+import { DailyOperationsView, daysUntil, ExpiryView, InsightsView, InventoryView, normalizeSheetData, PurchasingView, SheetData } from "./components/operations";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "./lib/supabase";
 
 type Theme = "dark" | "light";
@@ -39,15 +40,17 @@ function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }
   );
 }
 
-function Dashboard() {
+function Dashboard({ data, navigate }: { data: SheetData; navigate: (section: string) => void }) {
   const max = Math.max(...sales);
   const points = sales.map((v, i) => `${i * (100 / 6)},${92 - (v / max) * 72}`).join(" ");
+  const expired = data.inventory.filter((item) => item.qty > 0 && (daysUntil(item.expDate) ?? 0) < 0);
+  const expiring = data.inventory.filter((item) => { const days = daysUntil(item.expDate); return item.qty > 0 && days != null && days >= 0 && days <= 7; });
   return (
     <>
       <section className="kpi-grid" aria-label="Key performance indicators">
-        <article className="kpi-card blue"><div className="kpi-icon">▣</div><div><span>Active stock records</span><strong>427</strong><small>Across Soho and Outlet</small></div></article>
-        <article className="kpi-card red"><div className="kpi-icon">◷</div><div><span>Expired batches</span><strong>4</strong><small>Action required today</small></div></article>
-        <article className="kpi-card amber"><div className="kpi-icon">△</div><div><span>Expiring in 7 days</span><strong>4</strong><small>933 units exposed</small></div></article>
+        <article className="kpi-card blue"><div className="kpi-icon">▣</div><div><span>Active stock records</span><strong>{data.inventory.length || 427}</strong><small>Across Soho and Outlet</small></div></article>
+        <article className="kpi-card red"><div className="kpi-icon">◷</div><div><span>Expired batches</span><strong>{data.inventory.length ? expired.length : 4}</strong><small>Action required today</small></div></article>
+        <article className="kpi-card amber"><div className="kpi-icon">△</div><div><span>Expiring in 7 days</span><strong>{data.inventory.length ? expiring.length : 4}</strong><small>{data.inventory.length ? `${expiring.reduce((sum, item) => sum + item.qty, 0).toLocaleString()} units exposed` : "933 units exposed"}</small></div></article>
         <article className="kpi-card green"><div className="kpi-icon">↗</div><div><span>July sales</span><strong>Rp 39.78M</strong><small>Rp 1.37M daily average</small></div></article>
       </section>
 
@@ -55,9 +58,9 @@ function Dashboard() {
         <article className="panel attention-panel">
           <div className="panel-heading"><div><p className="eyebrow">Decision board</p><h2>What needs your attention</h2></div><span className="azumie-tag">✦ Azumie priority</span></div>
           <div className="action-list">
-            <div className="action-row"><span className="rank">01</span><div className="action-copy"><strong>Remove four expired batches</strong><span>Prevent accidental use and record the waste reason.</span></div><div className="impact"><small>IMPACT</small><b>Safety</b></div><button>Review items</button></div>
-            <div className="action-row"><span className="rank">02</span><div className="action-copy"><strong>Use Cheese Frankfurter first</strong><span>6 bags across both locations expire tomorrow.</span></div><div className="impact"><small>AT RISK</small><b>6 bags</b></div><button>Plan usage</button></div>
-            <div className="action-row"><span className="rank">03</span><div className="action-copy"><strong>Review July sales volatility</strong><span>Daily revenue ranged from Rp166K to Rp2.75M.</span></div><div className="impact positive"><small>OPPORTUNITY</small><b>Demand</b></div><button>View insight</button></div>
+            <div className="action-row"><span className="rank">01</span><div className="action-copy"><strong>Remove {data.inventory.length ? expired.length : "four"} expired batches</strong><span>Prevent accidental use and record the waste reason.</span></div><div className="impact"><small>IMPACT</small><b>Safety</b></div><button onClick={() => navigate("Expiry & Waste")}>Review items</button></div>
+            <div className="action-row"><span className="rank">02</span><div className="action-copy"><strong>Use near-expiry stock first</strong><span>{data.inventory.length ? `${expiring.length} batches need attention within seven days.` : "6 bags across both locations expire tomorrow."}</span></div><div className="impact"><small>AT RISK</small><b>{data.inventory.length ? expiring.reduce((sum, item) => sum + item.qty, 0) : 6} units</b></div><button onClick={() => navigate("Expiry & Waste")}>Plan usage</button></div>
+            <div className="action-row"><span className="rank">03</span><div className="action-copy"><strong>Review July sales volatility</strong><span>Daily revenue ranged from Rp166K to Rp2.75M.</span></div><div className="impact positive"><small>OPPORTUNITY</small><b>Demand</b></div><button onClick={() => navigate("Azumie Insights")}>View insight</button></div>
           </div>
           <div className="insight-strip"><span className="spark">✦</span><div><strong>Azumie insight</strong><p>Prioritizing expiry actions today protects stock integrity while sales patterns are reviewed for the next purchasing cycle.</p></div><a href="#insights">See all recommendations →</a></div>
         </article>
@@ -79,23 +82,14 @@ function Dashboard() {
   );
 }
 
-function Placeholder({ section }: { section: string }) {
-  const descriptions: Record<string,string> = {
-    Inventory: "Search every SKU, review quantities by location, inspect batch dates, and create stock movements.",
-    Purchasing: "Manage requisitions, approvals, purchase orders, receiving, and purchasing history in one workflow.",
-    "Expiry & Waste": "Prioritize batches by expiry risk, record waste, and turn ingredients into time-sensitive action plans.",
-    "Daily Operations": "Complete and review Bar, Floor, and Kitchen checklists with issue escalation.",
-    "Azumie Insights": "Translate restaurant data into prioritized recommendations and measure what changed afterward.",
-  };
-  return <section className="section-placeholder"><p className="eyebrow">Senza Fine Operations</p><h2>{section}</h2><p>{descriptions[section]}</p><div className="coming-grid"><article><span>Live Google Sheets</span><strong>Connection ready</strong><small>Secure API bridge setup follows the interface build.</small></article><article><span>Existing logic</span><strong>Recovered</strong><small>The original workflows are being simplified, not discarded.</small></article><article><span>Experience</span><strong>Owner + staff views</strong><small>Each role sees only the actions relevant to their work.</small></article></div></section>;
-}
-
 export default function Home() {
   const [theme, setTheme] = useState<Theme>("dark");
   const [section, setSection] = useState("Overview");
   const [liveSync, setLiveSync] = useState<"checking" | "live" | "snapshot" | "error">("checking");
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [sheetData, setSheetData] = useState<SheetData>({ inventory: [], names: [], locs: ["Soho", "Outlet"], reasons: ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
+  const [refreshKey, setRefreshKey] = useState(0);
   const authRequired = process.env.NEXT_PUBLIC_AUTH_REQUIRED === "true";
   useEffect(() => { const saved = window.localStorage.getItem("senza-theme") as Theme | null; if (saved) window.queueMicrotask(() => setTheme(saved)); }, []);
   useEffect(() => {
@@ -115,13 +109,25 @@ export default function Home() {
           headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
         });
         const data = await response.json();
-        if (active) setLiveSync(data.ok ? "live" : data.configured === false ? "snapshot" : "error");
+        if (active) {
+          if (response.ok && data.configured !== false) {
+            setSheetData(normalizeSheetData(data));
+            setLiveSync("live");
+          } else setLiveSync(data.configured === false ? "snapshot" : "error");
+        }
       } catch { if (active) setLiveSync("error"); }
     };
     sync();
     const timer = window.setInterval(sync, 30000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [authReady, authRequired, session]);
+  }, [authReady, authRequired, session, refreshKey]);
+  const submitAction = async (payload: Record<string, unknown>) => {
+    try {
+      const response = await fetch("/api/sheets", { method: "POST", headers: { "content-type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) }, body: JSON.stringify(payload) });
+      const result = await response.json();
+      return { ok: response.ok && (result.ok !== false) && !result.error, message: response.ok && !result.error ? (result.message || "Saved successfully to Google Sheets.") : (result.error || result.message || "The update could not be saved.") };
+    } catch { return { ok: false, message: "The live Sheet connection could not be reached." }; }
+  };
   const toggleTheme = () => setTheme((current) => { const next = current === "dark" ? "light" : "dark"; window.localStorage.setItem("senza-theme", next); return next; });
   if (!authReady) return <main className="auth-loading">Opening Senza Fine Operations…</main>;
   if (authRequired && !session) return <AuthScreen setupRequired={!isSupabaseConfigured()} />;
@@ -137,7 +143,14 @@ export default function Home() {
       </aside>
       <section className="workspace">
         <header className="topbar"><div><p>Sunday, August 2, 2026</p><h1>{section === "Overview" ? `Good afternoon, ${String(displayName).split(" ")[0]}` : section}</h1></div><div className="top-actions"><button className="location">⌖ <span>All locations</span>⌄</button><ThemeToggle theme={theme} onToggle={toggleTheme}/><button className="profile" onClick={session ? signOut : undefined} title={session ? "Sign out" : "Preview account"}><span>{initial}</span><div><strong>{displayName}</strong><small>{session ? "Signed in" : "Owner preview"}</small></div></button></div></header>
-        <div className="content">{section === "Overview" ? <Dashboard/> : <Placeholder section={section}/>}</div>
+        <div className="content">
+          {section === "Overview" ? <Dashboard data={sheetData} navigate={setSection}/> : null}
+          {section === "Inventory" ? <InventoryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
+          {section === "Purchasing" ? <PurchasingView data={sheetData} submit={submitAction}/> : null}
+          {section === "Expiry & Waste" ? <ExpiryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
+          {section === "Daily Operations" ? <DailyOperationsView data={sheetData} submit={submitAction}/> : null}
+          {section === "Azumie Insights" ? <InsightsView data={sheetData} navigate={setSection}/> : null}
+        </div>
       </section>
     </main>
   );
