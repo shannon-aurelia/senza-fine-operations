@@ -90,7 +90,7 @@ export default function Home() {
   const [authReady, setAuthReady] = useState(false);
   const [sheetData, setSheetData] = useState<SheetData>({ inventory: [], names: [], locs: ["Soho", "Outlet"], reasons: ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
   const [refreshKey, setRefreshKey] = useState(0);
-  const authRequired = process.env.NEXT_PUBLIC_AUTH_REQUIRED === "true";
+  const authRequired = false;
   useEffect(() => { const saved = window.localStorage.getItem("senza-theme") as Theme | null; if (saved) window.queueMicrotask(() => setTheme(saved)); }, []);
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
