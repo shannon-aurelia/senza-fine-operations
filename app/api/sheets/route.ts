@@ -44,7 +44,8 @@ export async function GET(request: NextRequest) {
     const response = await bridgeFetch();
     const data = await response.json();
     return NextResponse.json({ configured: true, ...data });
-  } catch {
+  } catch (error) {
+    console.error("SHEETS_BRIDGE_GET_FAILED", error);
     return NextResponse.json({ configured: true, error: "Live Sheet connection is temporarily unavailable." }, { status: 502 });
   }
 }
