@@ -8,7 +8,7 @@ function configured() {
 }
 
 async function authorize(request: NextRequest, write = false) {
-  if (process.env.NEXT_PUBLIC_AUTH_REQUIRED !== "true") return { ok: true, email: "preview@senza-fine.local" };
+  if (!write) return { ok: true, email: "preview@senza-fine.local", role: "viewer" };
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   const supabase = getSupabaseServerClient();
   if (!token || !supabase) return { ok: false, status: 401, error: "Sign in is required." };
