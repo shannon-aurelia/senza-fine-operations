@@ -17,8 +17,28 @@ export type InventoryItem = {
   weight: number;
 };
 
+export type PurchaseRequest = {
+  rowNumber: number;
+  requestedAt: string;
+  prId: string;
+  requestedBy: string;
+  location: string;
+  email: string;
+  type: string;
+  sku: string;
+  brand: string;
+  itemName: string;
+  uom: string;
+  qtyRequested: number;
+  preApproved: boolean;
+  ordered: boolean;
+  qtyReceived: number;
+  complete: boolean;
+};
+
 export type SheetData = {
   inventory: InventoryItem[];
+  purchases: PurchaseRequest[];
   names: string[];
   locs: string[];
   reasons: string[];
@@ -54,8 +74,31 @@ export function normalizeSheetData(payload: Record<string, unknown>): SheetData 
     const result = [...new Set(values.map(text).filter(Boolean))];
     return result.length ? result : fallback;
   };
+  const purchaseSource = Array.isArray(payload.purchases) ? payload.purchases : [];
+  const purchases = purchaseSource.map((raw) => {
+    const item = (raw || {}) as Record<string, unknown>;
+    return {
+      rowNumber: number(item.rowNumber),
+      requestedAt: text(item.requestedAt),
+      prId: text(item.prId),
+      requestedBy: text(item.requestedBy),
+      location: text(item.location),
+      email: text(item.email),
+      type: text(item.type),
+      sku: text(item.sku),
+      brand: text(item.brand),
+      itemName: text(item.itemName || item.name),
+      uom: text(item.uom) || "unit",
+      qtyRequested: number(item.qtyRequested),
+      preApproved: Boolean(item.preApproved),
+      ordered: Boolean(item.ordered),
+      qtyReceived: number(item.qtyReceived),
+      complete: Boolean(item.complete),
+    };
+  });
   return {
     inventory,
+    purchases,
     names: unique(Array.isArray(payload.names) ? payload.names : [], []),
     locs: unique(Array.isArray(payload.locs) ? payload.locs : inventory.map((item) => item.loc), ["Soho", "Outlet"]),
     reasons: unique(Array.isArray(payload.reasons) ? payload.reasons : [], ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"]),
@@ -158,6 +201,118 @@ export function PurchasingView({ data, submit }: { data: SheetData; submit: Subm
     if (result.ok) setLines([{ id: Date.now(), item: "", sku: "", qty: "", uom: "", location: "Outlet" }]);
   }
   return <section className="module-page"><div className="module-heading"><div><p className="eyebrow">Procurement workflow</p><h2>Purchase requisition</h2><p>Create a multi-item request for review and ordering.</p></div><span className="live-badge">Writes to Google Sheets</span></div><form className="workflow-card" onSubmit={submitRequest}><div className="workflow-title"><div><span>Step 1 of 4</span><strong>New requisition</strong></div><div className="workflow-steps"><i className="active">Request</i><i>Approval</i><i>Order</i><i>Receive</i></div></div><div className="form-grid purchase-meta"><label><span>Requested by</span><input name="name" required placeholder="Employee name" list="requester-names"/></label><label><span>Email</span><input name="email" type="email" placeholder="Optional notification email"/></label></div><datalist id="requester-names">{data.names.map((name) => <option key={name} value={name}/>)}</datalist><div className="line-items"><div className="line-header"><span>Item</span><span>Location</span><span>Qty</span><span>UOM</span><span></span></div>{lines.map((line) => <div className="line-row" key={line.id}><select value={line.item ? `${line.sku}|${line.item}` : ""} onChange={(event) => chooseItem(line.id, event.target.value)} required><option value="">Select inventory item</option>{catalog.map((item) => <option key={`${item.sku}|${item.detail}`} value={`${item.sku}|${item.detail}`}>{item.detail} · {item.sku}</option>)}</select><select value={line.location} onChange={(event) => updateLine(line.id, { location: event.target.value })}>{data.locs.map((loc) => <option key={loc}>{loc}</option>)}</select><input value={line.qty} onChange={(event) => updateLine(line.id, { qty: event.target.value })} type="number" min="1" placeholder="0" required/><input value={line.uom} onChange={(event) => updateLine(line.id, { uom: event.target.value })} placeholder="UOM" required/><button type="button" onClick={() => setLines((current) => current.length === 1 ? current : current.filter((item) => item.id !== line.id))} aria-label="Remove item">×</button></div>)}</div><button type="button" className="add-line" onClick={() => setLines((current) => [...current, { id: Date.now(), item: "", sku: "", qty: "", uom: "", location: data.locs[0] || "Outlet" }])}>+ Add another item</button><label className="remarks-field"><span>Request notes</span><textarea name="remarks" rows={3} placeholder="Supplier preference, urgency, or other context"/></label><StatusBanner status={status}/><div className="form-footer"><span>{lines.filter((line) => line.item).length} item(s) in request</span><button className="primary-button" disabled={submitting}>{submitting ? "Submitting…" : "Submit for approval"}</button></div></form></section>;
+}
+
+export function UsageView({ data, submit, onRefresh }: { data: SheetData; submit: SubmitAction; onRefresh: () => void }) {
+  const activeItems = useMemo(() => data.inventory.map((item, index) => ({ item, key: `${index}|${item.sku}|${item.loc}|${item.expDate}` })).filter(({ item }) => item.qty > 0).sort((a, b) => a.item.detail.localeCompare(b.item.detail)), [data.inventory]);
+  const [selectedKey, setSelectedKey] = useState("");
+  const [status, setStatus] = useState<{ tone: string; message: string } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const selected = activeItems.find((entry) => entry.key === selectedKey)?.item || null;
+
+  async function submitUsage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const qty = number(form.get("qty"));
+    if (qty <= 0 || qty > selected.qty) {
+      setStatus({ tone: "error", message: `Enter a quantity between 1 and ${selected.qty}.` });
+      return;
+    }
+    setSubmitting(true);
+    const result = await submit({
+      action: "stockOut",
+      name: text(form.get("name")),
+      location: selected.loc,
+      type: selected.type,
+      sku: selected.sku,
+      brand: selected.brand,
+      detail: selected.detail,
+      expDate: selected.expDate,
+      recDate: selected.recDate,
+      outQty: qty,
+      qty,
+      uom: selected.uom,
+      reason: text(form.get("reason")) || "Used",
+      remarks: text(form.get("remarks")),
+    });
+    setStatus({ tone: result.ok ? "success" : "error", message: result.message });
+    setSubmitting(false);
+    if (result.ok) {
+      setSelectedKey("");
+      onRefresh();
+      formElement.reset();
+    }
+  }
+
+  return <section className="module-page">
+    <div className="module-heading"><div><p className="eyebrow">Inventory movement</p><h2>Item usage</h2><p>Record ingredients and supplies used during restaurant operations.</p></div><button className="secondary-button" onClick={onRefresh}>↻ Refresh stock</button></div>
+    <form className="workflow-card simple-workflow" onSubmit={submitUsage}>
+      <div className="workflow-title"><div><span>Inventory usage</span><strong>New usage record</strong></div><span className="live-badge">Deducts from selected batch</span></div>
+      <div className="form-grid padded-form">
+        <label className="wide"><span>Inventory item</span><select value={selectedKey} onChange={(event) => setSelectedKey(event.target.value)} required><option value="">Select item and batch</option>{activeItems.map(({ item, key }) => <option key={key} value={key}>{item.detail} · {item.loc} · {item.qty.toLocaleString()} {item.uom}</option>)}</select></label>
+        <label><span>Used by</span><input name="name" required list="usage-names" placeholder="Employee name"/></label>
+        <label><span>Quantity used</span><input name="qty" type="number" min="0.01" step="any" max={selected?.qty} required placeholder={selected ? `Max ${selected.qty}` : "0"}/></label>
+        <label><span>Reason</span><select name="reason" defaultValue="Used">{data.reasons.map((reason) => <option key={reason}>{reason}</option>)}</select></label>
+        <label><span>Location</span><input value={selected?.loc || ""} readOnly placeholder="From selected batch"/></label>
+        <label className="wide"><span>Usage notes</span><textarea name="remarks" rows={3} placeholder="Menu item, shift, event, or other context"/></label>
+      </div>
+      <datalist id="usage-names">{data.names.map((name) => <option key={name} value={name}/>)}</datalist>
+      <StatusBanner status={status}/>
+      <div className="form-footer"><span>{selected ? `${selected.qty.toLocaleString()} ${selected.uom} available` : "Choose the exact stock batch used"}</span><button className="primary-button" disabled={submitting || !selected}>{submitting ? "Saving…" : "Record item usage"}</button></div>
+    </form>
+  </section>;
+}
+
+export function ReceivingView({ data, submit, onRefresh }: { data: SheetData; submit: SubmitAction; onRefresh: () => void }) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("Pending");
+  const [selected, setSelected] = useState<PurchaseRequest | null>(null);
+  const [status, setStatus] = useState<{ tone: string; message: string } | null>(null);
+  const rows = useMemo(() => data.purchases.filter((item) => {
+    const remaining = Math.max(0, item.qtyRequested - item.qtyReceived);
+    const matches = !query || [item.prId, item.itemName, item.sku, item.requestedBy].join(" ").toLowerCase().includes(query.toLowerCase());
+    const matchesFilter = filter === "All" || (filter === "Pending" ? remaining > 0 : remaining === 0);
+    return matches && matchesFilter;
+  }).sort((a, b) => b.requestedAt.localeCompare(a.requestedAt)), [data.purchases, query, filter]);
+
+  async function submitReceipt(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const form = new FormData(event.currentTarget);
+    const qtyReceived = number(form.get("qtyReceived"));
+    if (qtyReceived <= 0) {
+      setStatus({ tone: "error", message: "Enter the quantity physically received." });
+      return;
+    }
+    const result = await submit({
+      action: "receivePurchase",
+      rowNumber: selected.rowNumber,
+      prId: selected.prId,
+      sku: selected.sku,
+      itemName: selected.itemName,
+      receiver: text(form.get("receiver")),
+      location: text(form.get("location")),
+      expiryDate: text(form.get("expiryDate")),
+      qtyReceived,
+      remarks: text(form.get("remarks")),
+    });
+    setStatus({ tone: result.ok ? "success" : "error", message: result.message });
+    if (result.ok) {
+      setSelected(null);
+      onRefresh();
+    }
+  }
+
+  const pending = data.purchases.filter((item) => item.qtyRequested > item.qtyReceived).length;
+  return <section className="module-page">
+    <div className="module-heading"><div><p className="eyebrow">Purchasing completion</p><h2>Goods receiving</h2><p>Confirm the quantity and expiry date of goods arriving from an existing purchase request.</p></div><span className="live-badge">{pending} line(s) awaiting receipt</span></div>
+    <div className="filter-bar"><label className="search-field"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search PR ID, item, SKU, or requester"/></label><select value={filter} onChange={(event) => setFilter(event.target.value)}><option>Pending</option><option>Received</option><option>All</option></select></div>
+    <StatusBanner status={status}/>
+    {rows.length ? <div className="data-table-wrap"><table className="data-table"><thead><tr><th>PR ID</th><th>Item</th><th>Requested by</th><th>Location</th><th>Requested</th><th>Received</th><th>Status</th><th></th></tr></thead><tbody>{rows.map((item) => { const remaining = Math.max(0, item.qtyRequested - item.qtyReceived); return <tr key={`${item.rowNumber}-${item.prId}`}><td><strong>{item.prId}</strong><span>{formatDate(item.requestedAt)}</span></td><td><strong>{item.itemName}</strong><span>{item.type} · {item.sku || "No SKU"}</span></td><td>{item.requestedBy || "—"}</td><td><span className="location-chip">{item.location || "Outlet"}</span></td><td><strong>{item.qtyRequested.toLocaleString()}</strong> {item.uom}</td><td><strong>{item.qtyReceived.toLocaleString()}</strong> {item.uom}</td><td><span className={remaining > 0 ? "risk warning" : "risk safe"}>{remaining > 0 ? `${remaining} remaining` : "Complete"}</span></td><td><button className="row-button" disabled={remaining === 0} onClick={() => { setSelected(item); setStatus(null); }}>Receive</button></td></tr>; })}</tbody></table></div> : <EmptyState title="No purchase lines found" copy="Try another filter or submit a purchase request first."/>}
+    {selected ? <div className="modal-backdrop" onMouseDown={() => setSelected(null)}><form className="action-modal" onSubmit={submitReceipt} onMouseDown={(event) => event.stopPropagation()}><div className="modal-heading"><div><p className="eyebrow">Receive PR {selected.prId}</p><h3>{selected.itemName}</h3><span>{Math.max(0, selected.qtyRequested - selected.qtyReceived)} {selected.uom} remaining</span></div><button type="button" onClick={() => setSelected(null)}>×</button></div><div className="form-grid"><label><span>Received by</span><input name="receiver" required list="receiving-names"/></label><label><span>Location</span><select name="location" defaultValue={selected.location || "Outlet"}>{data.locs.map((loc) => <option key={loc}>{loc}</option>)}</select></label><label><span>Quantity received</span><input name="qtyReceived" type="number" min="0.01" step="any" required/></label><label><span>Expiry date</span><input name="expiryDate" type="date"/></label><label className="wide"><span>Receiving notes</span><textarea name="remarks" rows={3} placeholder="Condition, shortage, supplier note, or batch information"/></label></div><datalist id="receiving-names">{data.names.map((name) => <option key={name} value={name}/>)}</datalist><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setSelected(null)}>Cancel</button><button className="primary-button">Confirm receipt</button></div></form></div> : null}
+  </section>;
 }
 
 export function ExpiryView({ data, submit, onRefresh }: { data: SheetData; submit: SubmitAction; onRefresh: () => void }) {

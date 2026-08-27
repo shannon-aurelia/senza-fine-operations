@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import AuthScreen from "./components/auth-screen";
-import { DailyOperationsView, daysUntil, ExpiryView, InsightsView, InventoryView, normalizeSheetData, PurchasingView, SheetData } from "./components/operations";
+import EmergencyAccess from "./components/emergency-access";
+import { DailyOperationsView, daysUntil, ExpiryView, InsightsView, InventoryView, normalizeSheetData, PurchasingView, ReceivingView, SheetData, UsageView } from "./components/operations";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "./lib/supabase";
 
 type Theme = "dark" | "light";
@@ -11,7 +12,9 @@ type Theme = "dark" | "light";
 const navItems = [
   ["Overview", "⌂"],
   ["Inventory", "▣"],
+  ["Item Usage", "−"],
   ["Purchasing", "▤"],
+  ["Receiving", "↓"],
   ["Expiry & Waste", "◷"],
   ["Daily Operations", "✓"],
   ["Azumie Insights", "✦"],
@@ -43,12 +46,13 @@ function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }
 function Dashboard({ data, navigate }: { data: SheetData; navigate: (section: string) => void }) {
   const max = Math.max(...sales);
   const points = sales.map((v, i) => `${i * (100 / 6)},${92 - (v / max) * 72}`).join(" ");
+  const activeRecords = data.inventory.filter((item) => item.qty > 0);
   const expired = data.inventory.filter((item) => item.qty > 0 && (daysUntil(item.expDate) ?? 0) < 0);
   const expiring = data.inventory.filter((item) => { const days = daysUntil(item.expDate); return item.qty > 0 && days != null && days >= 0 && days <= 7; });
   return (
     <>
       <section className="kpi-grid" aria-label="Key performance indicators">
-        <article className="kpi-card blue"><div className="kpi-icon">▣</div><div><span>Active stock records</span><strong>{data.inventory.length || 427}</strong><small>Across Soho and Outlet</small></div></article>
+        <article className="kpi-card blue"><div className="kpi-icon">▣</div><div><span>Active stock records</span><strong>{activeRecords.length || 437}</strong><small>Across Soho and Outlet</small></div></article>
         <article className="kpi-card red"><div className="kpi-icon">◷</div><div><span>Expired batches</span><strong>{data.inventory.length ? expired.length : 4}</strong><small>Action required today</small></div></article>
         <article className="kpi-card amber"><div className="kpi-icon">△</div><div><span>Expiring in 7 days</span><strong>{data.inventory.length ? expiring.length : 4}</strong><small>{data.inventory.length ? `${expiring.reduce((sum, item) => sum + item.qty, 0).toLocaleString()} units exposed` : "933 units exposed"}</small></div></article>
         <article className="kpi-card green"><div className="kpi-icon">↗</div><div><span>July sales</span><strong>Rp 39.78M</strong><small>Rp 1.37M daily average</small></div></article>
@@ -88,9 +92,18 @@ export default function Home() {
   const [liveSync, setLiveSync] = useState<"checking" | "live" | "snapshot" | "error">("checking");
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [sheetData, setSheetData] = useState<SheetData>({ inventory: [], names: [], locs: ["Soho", "Outlet"], reasons: ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
+  const [accessReady, setAccessReady] = useState(false);
+  const [emergencyPin, setEmergencyPin] = useState("");
+  const [sheetData, setSheetData] = useState<SheetData>({ inventory: [], purchases: [], names: [], locs: ["Soho", "Outlet"], reasons: ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
   const [refreshKey, setRefreshKey] = useState(0);
   const authRequired = false;
+  useEffect(() => {
+    const savedPin = window.sessionStorage.getItem("senza-emergency-pin") || "";
+    window.queueMicrotask(() => {
+      setEmergencyPin(savedPin);
+      setAccessReady(true);
+    });
+  }, []);
   useEffect(() => { const saved = window.localStorage.getItem("senza-theme") as Theme | null; if (saved) window.queueMicrotask(() => setTheme(saved)); }, []);
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -100,36 +113,46 @@ export default function Home() {
     return () => data.subscription.unsubscribe();
   }, []);
   useEffect(() => {
-    if (!authReady || (authRequired && !session)) return;
+    if (!accessReady || (!emergencyPin && !session) || (authRequired && !session && !emergencyPin)) return;
     let active = true;
     const sync = async () => {
       try {
         const response = await fetch("/api/sheets", {
           cache: "no-store",
-          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+          headers: {
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+            ...(emergencyPin ? { "x-senza-emergency-pin": emergencyPin } : {}),
+          },
         });
         const data = await response.json();
         if (active) {
-          if (response.ok && data.configured !== false) {
+          if (response.ok) {
             setSheetData(normalizeSheetData(data));
-            setLiveSync("live");
-          } else setLiveSync(data.configured === false ? "snapshot" : "error");
+            setLiveSync(data.configured === false || data.syncStatus === "snapshot" ? "snapshot" : "live");
+          } else {
+            if (response.status === 401 && emergencyPin) {
+              window.sessionStorage.removeItem("senza-emergency-pin");
+              setEmergencyPin("");
+            }
+            setLiveSync("error");
+          }
         }
       } catch { if (active) setLiveSync("error"); }
     };
     sync();
     const timer = window.setInterval(sync, 30000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [authReady, authRequired, session, refreshKey]);
+  }, [accessReady, authReady, authRequired, emergencyPin, session, refreshKey]);
   const submitAction = async (payload: Record<string, unknown>) => {
     try {
-      const response = await fetch("/api/sheets", { method: "POST", headers: { "content-type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) }, body: JSON.stringify(payload) });
+      const response = await fetch("/api/sheets", { method: "POST", headers: { "content-type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}), ...(emergencyPin ? { "x-senza-emergency-pin": emergencyPin } : {}) }, body: JSON.stringify(payload) });
       const result = await response.json();
       return { ok: response.ok && (result.ok !== false) && !result.error, message: response.ok && !result.error ? (result.message || "Saved successfully to Google Sheets.") : (result.error || result.message || "The update could not be saved.") };
     } catch { return { ok: false, message: "The live Sheet connection could not be reached." }; }
   };
   const toggleTheme = () => setTheme((current) => { const next = current === "dark" ? "light" : "dark"; window.localStorage.setItem("senza-theme", next); return next; });
-  if (!authReady) return <main className="auth-loading">Opening Senza Fine Operations…</main>;
+  if (!accessReady || (!emergencyPin && !authReady)) return <main className="auth-loading">Opening Senza Fine Operations…</main>;
+  if (!emergencyPin && !session) return <EmergencyAccess onAuthorized={setEmergencyPin} />;
   if (authRequired && !session) return <AuthScreen setupRequired={!isSupabaseConfigured()} />;
   const displayName = session?.user.user_metadata?.full_name || session?.user.user_metadata?.name || "Lia";
   const initial = String(displayName).charAt(0).toUpperCase();
@@ -139,14 +162,16 @@ export default function Home() {
       <aside className="sidebar">
         <div className="brand"><img src="/senza-fine-logo.jpeg" alt="Senza Fine"/><div><strong>Senza Fine</strong><span>Operations</span></div></div>
         <nav>{navItems.map(([label, icon]) => <button key={label} className={section === label ? "active" : ""} onClick={() => setSection(label)}><span>{icon}</span>{label}</button>)}</nav>
-        <div className="sidebar-footer"><div className="sync"><i className={liveSync}/><div><strong>Google Sheets</strong><span>{liveSync === "live" ? "Live · refreshes every 30s" : liveSync === "checking" ? "Checking live connection…" : liveSync === "snapshot" ? "Workbook preview" : "Connection needs attention"}</span></div></div><small>Powered by <b>Azumie</b></small></div>
+        <div className="sidebar-footer"><div className="sync"><i className={liveSync}/><div><strong>Inventory data</strong><span>{liveSync === "live" ? "Live · refreshes every 30s" : liveSync === "checking" ? "Checking connection…" : liveSync === "snapshot" ? "Updated Aug 26 backup" : "Connection needs attention"}</span></div></div><small>Powered by <b>Azumie</b></small></div>
       </aside>
       <section className="workspace">
-        <header className="topbar"><div><p>Sunday, August 2, 2026</p><h1>{section === "Overview" ? `Good afternoon, ${String(displayName).split(" ")[0]}` : section}</h1></div><div className="top-actions"><button className="location">⌖ <span>All locations</span>⌄</button><ThemeToggle theme={theme} onToggle={toggleTheme}/><button className="profile" onClick={session ? signOut : undefined} title={session ? "Sign out" : "Preview account"}><span>{initial}</span><div><strong>{displayName}</strong><small>{session ? "Signed in" : "Owner preview"}</small></div></button></div></header>
+        <header className="topbar"><div><p>Inventory updated August 26, 2026</p><h1>{section === "Overview" ? `Good afternoon, ${String(displayName).split(" ")[0]}` : section}</h1></div><div className="top-actions"><button className="location">⌖ <span>All locations</span>⌄</button><ThemeToggle theme={theme} onToggle={toggleTheme}/><button className="profile" onClick={session ? signOut : undefined} title={session ? "Sign out" : "Owner access"}><span>{initial}</span><div><strong>{displayName}</strong><small>{session ? "Signed in" : "Owner access"}</small></div></button></div></header>
         <div className="content">
           {section === "Overview" ? <Dashboard data={sheetData} navigate={setSection}/> : null}
           {section === "Inventory" ? <InventoryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
+          {section === "Item Usage" ? <UsageView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Purchasing" ? <PurchasingView data={sheetData} submit={submitAction}/> : null}
+          {section === "Receiving" ? <ReceivingView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Expiry & Waste" ? <ExpiryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Daily Operations" ? <DailyOperationsView data={sheetData} submit={submitAction}/> : null}
           {section === "Azumie Insights" ? <InsightsView data={sheetData} navigate={setSection}/> : null}

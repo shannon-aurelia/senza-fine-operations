@@ -103,3 +103,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
 @media(max-width:1050px){.line-header{display:none}.line-row{grid-template-columns:1fr 120px 80px 90px 36px}.daily-layout{grid-template-columns:1fr}.expiry-board article{grid-template-columns:85px 1fr 80px}.expiry-board article .row-button{grid-column:2/-1;width:max-content}.insight-hero{grid-template-columns:1fr}.hero-metric{border-left:0;border-top:1px solid var(--border)}}
 @media(max-width:720px){.module-heading{align-items:flex-start;flex-direction:column}.filter-bar{align-items:stretch;flex-direction:column}.filter-inline{width:100%}.filter-inline select{flex:1}.mini-kpis{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.form-grid .wide{grid-column:auto}.workflow-title{align-items:flex-start;flex-direction:column}.workflow-steps{width:100%;overflow:auto}.line-row{grid-template-columns:1fr 1fr}.line-row select:first-child{grid-column:1/-1}.line-row button{justify-self:end}.form-footer{align-items:stretch;flex-direction:column;gap:12px}.expiry-board article{grid-template-columns:70px 1fr}.expiry-qty{grid-column:2}.segmented-control{grid-template-columns:1fr}.check-row{grid-template-columns:28px 1fr}.check-row small{grid-column:2}.recommendation-grid article{grid-template-columns:45px 1fr}.recommendation-action{grid-column:2;border-left:0;padding-left:0;text-align:left}.insight-hero{padding:20px}}
 
+.emergency-form { display:grid;gap:14px;margin:22px 0 14px; }
+.emergency-form label,.emergency-form label span { display:block; }
+.emergency-form label span { margin-bottom:7px;color:var(--muted);font-size:12px;font-weight:700; }
+.emergency-form input { width:100%;height:48px;padding:0 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);color:var(--text);font:inherit;letter-spacing:.08em;outline:none; }
+.emergency-form input:focus { border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent); }
+.padded-form { padding:22px; }
+.simple-workflow .live-badge { align-self:center; }
+.row-button:disabled { cursor:not-allowed;opacity:.45; }
+
