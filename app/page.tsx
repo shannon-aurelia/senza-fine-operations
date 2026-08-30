@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import AuthScreen from "./components/auth-screen";
 import EmergencyAccess from "./components/emergency-access";
-import { DailyOperationsView, daysUntil, ExpiryView, InsightsView, InventoryView, normalizeSheetData, PurchasingView, ReceivingView, SheetData, UsageView } from "./components/operations";
+import { DailyOperationsView, daysUntil, ExpiryView, InsightsView, InventoryView, normalizeSheetData, PurchasingView, ReceivingView, ReportsView, SheetData, UsageView } from "./components/operations";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "./lib/supabase";
 
 type Theme = "dark" | "light";
@@ -15,6 +15,7 @@ const navItems = [
   ["Item Usage", "−"],
   ["Purchasing", "▤"],
   ["Receiving", "↓"],
+  ["Reports", "▥"],
   ["Expiry & Waste", "◷"],
   ["Daily Operations", "✓"],
   ["Azumie Insights", "✦"],
@@ -94,7 +95,7 @@ export default function Home() {
   const [authReady, setAuthReady] = useState(false);
   const [accessReady, setAccessReady] = useState(false);
   const [emergencyPin, setEmergencyPin] = useState("");
-  const [sheetData, setSheetData] = useState<SheetData>({ inventory: [], purchases: [], names: [], locs: ["Soho", "Outlet"], reasons: ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
+  const [sheetData, setSheetData] = useState<SheetData>({ inventory: [], purchases: [], usage: [], receipts: [], names: [], locs: ["Soho", "Outlet"], reasons: ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
   const [refreshKey, setRefreshKey] = useState(0);
   const authRequired = false;
   useEffect(() => {
@@ -147,8 +148,10 @@ export default function Home() {
     try {
       const response = await fetch("/api/sheets", { method: "POST", headers: { "content-type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}), ...(emergencyPin ? { "x-senza-emergency-pin": emergencyPin } : {}) }, body: JSON.stringify(payload) });
       const result = await response.json();
-      return { ok: response.ok && (result.ok !== false) && !result.error, message: response.ok && !result.error ? (result.message || "Saved successfully to Google Sheets.") : (result.error || result.message || "The update could not be saved.") };
-    } catch { return { ok: false, message: "The live Sheet connection could not be reached." }; }
+      const ok = response.ok && (result.ok !== false) && !result.error;
+      if (ok) setRefreshKey((value) => value + 1);
+      return { ok, message: ok ? (result.message || "Saved successfully.") : (result.error || result.message || "The update could not be saved.") };
+    } catch { return { ok: false, message: "The operations database could not be reached." }; }
   };
   const toggleTheme = () => setTheme((current) => { const next = current === "dark" ? "light" : "dark"; window.localStorage.setItem("senza-theme", next); return next; });
   if (!accessReady || (!emergencyPin && !authReady)) return <main className="auth-loading">Opening Senza Fine Operations…</main>;
@@ -162,16 +165,17 @@ export default function Home() {
       <aside className="sidebar">
         <div className="brand"><img src="/senza-fine-logo.jpeg" alt="Senza Fine"/><div><strong>Senza Fine</strong><span>Operations</span></div></div>
         <nav>{navItems.map(([label, icon]) => <button key={label} className={section === label ? "active" : ""} onClick={() => setSection(label)}><span>{icon}</span>{label}</button>)}</nav>
-        <div className="sidebar-footer"><div className="sync"><i className={liveSync}/><div><strong>Inventory data</strong><span>{liveSync === "live" ? "Live · refreshes every 30s" : liveSync === "checking" ? "Checking connection…" : liveSync === "snapshot" ? "Updated Aug 26 backup" : "Connection needs attention"}</span></div></div><small>Powered by <b>Azumie</b></small></div>
+        <div className="sidebar-footer"><div className="sync"><i className={liveSync}/><div><strong>Operations database</strong><span>{liveSync === "live" ? "Live · refreshes every 30s" : liveSync === "checking" ? "Checking connection…" : liveSync === "snapshot" ? "Recovery snapshot" : "Connection needs attention"}</span></div></div><small>Powered by <b>Azumie</b></small></div>
       </aside>
       <section className="workspace">
-        <header className="topbar"><div><p>Inventory updated August 26, 2026</p><h1>{section === "Overview" ? `Good afternoon, ${String(displayName).split(" ")[0]}` : section}</h1></div><div className="top-actions"><button className="location">⌖ <span>All locations</span>⌄</button><ThemeToggle theme={theme} onToggle={toggleTheme}/><button className="profile" onClick={session ? signOut : undefined} title={session ? "Sign out" : "Owner access"}><span>{initial}</span><div><strong>{displayName}</strong><small>{session ? "Signed in" : "Owner access"}</small></div></button></div></header>
+        <header className="topbar"><div><p>Live requests, receiving, usage, and inventory</p><h1>{section === "Overview" ? `Good afternoon, ${String(displayName).split(" ")[0]}` : section}</h1></div><div className="top-actions"><button className="location">⌖ <span>All locations</span>⌄</button><ThemeToggle theme={theme} onToggle={toggleTheme}/><button className="profile" onClick={session ? signOut : undefined} title={session ? "Sign out" : "Owner access"}><span>{initial}</span><div><strong>{displayName}</strong><small>{session ? "Signed in" : "Owner access"}</small></div></button></div></header>
         <div className="content">
           {section === "Overview" ? <Dashboard data={sheetData} navigate={setSection}/> : null}
           {section === "Inventory" ? <InventoryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Item Usage" ? <UsageView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
-          {section === "Purchasing" ? <PurchasingView data={sheetData} submit={submitAction}/> : null}
+          {section === "Purchasing" ? <PurchasingView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Receiving" ? <ReceivingView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
+          {section === "Reports" ? <ReportsView data={sheetData}/> : null}
           {section === "Expiry & Waste" ? <ExpiryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Daily Operations" ? <DailyOperationsView data={sheetData} submit={submitAction}/> : null}
           {section === "Azumie Insights" ? <InsightsView data={sheetData} navigate={setSection}/> : null}

@@ -111,4 +111,13 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .padded-form { padding:22px; }
 .simple-workflow .live-badge { align-self:center; }
 .row-button:disabled { cursor:not-allowed;opacity:.45; }
-
+.purchase-tabs { grid-template-columns:repeat(4,1fr); }
+.request-board { display:grid;gap:14px; }
+.request-card { padding:20px;border:1px solid var(--border);border-radius:15px;background:var(--surface);box-shadow:var(--shadow); }
+.request-card-head { display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding-bottom:15px;border-bottom:1px solid var(--border); }
+.request-card-head h3 { margin:8px 0 4px;font-size:21px; }.request-card-head p { margin:0;color:var(--muted);font-size:12px; }
+.status-chip { display:inline-flex;padding:5px 9px;border-radius:20px;background:var(--surface-2);color:var(--muted);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em; }
+.status-chip.submitted,.status-chip.reviewed { color:var(--amber);background:rgba(255,173,51,.1); }.status-chip.approved,.status-chip.ordered,.status-chip.partially-received { color:var(--accent);background:rgba(77,157,255,.1); }.status-chip.received { color:var(--green);background:rgba(66,206,136,.1); }.status-chip.rejected,.status-chip.cancelled { color:var(--red);background:rgba(255,102,95,.1); }
+.request-items { display:grid;gap:7px;padding:14px 0; }.request-items>div { display:grid;grid-template-columns:minmax(220px,1fr) 130px 100px;gap:12px;align-items:center;padding:9px 11px;border-radius:9px;background:var(--surface-2); }.request-items span { font-weight:650; }.request-items small { color:var(--muted);text-align:right; }.request-items input,.request-actions input { width:100%;height:39px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text); }
+.request-actions { display:flex;align-items:flex-end;gap:10px;padding-top:14px;border-top:1px solid var(--border); }.request-actions label { flex:1;display:grid;gap:6px; }.request-actions label span { color:var(--muted);font-size:11px;font-weight:700; }.danger-button { color:var(--red);border-color:color-mix(in srgb,var(--red) 45%,var(--border)); }.history-actions { justify-content:flex-end; }.report-period { justify-content:flex-end; }
+@media(max-width:720px){.purchase-tabs{grid-template-columns:repeat(2,1fr)}.request-card-head{flex-direction:column}.request-items>div{grid-template-columns:1fr 90px}.request-items small{grid-column:1/-1;text-align:left}.request-actions{align-items:stretch;flex-direction:column}.request-actions button{width:100%}}

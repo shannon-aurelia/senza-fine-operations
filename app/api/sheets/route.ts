@@ -4,12 +4,9 @@ import { getSupabaseServerClient } from "../../lib/supabase";
 import recoveredInventory from "../../data/recovered-inventory.json";
 
 const EMERGENCY_PIN_HASH = "31280f6d569c772d1a298233783981ae18f198589027afbd22b18b5aa484cba1";
+const OPERATIONS_STORE_URL = "https://mvfecvoozjwhmppqgued.supabase.co/functions/v1/senza-fine-ops";
 
 export const dynamic = "force-dynamic";
-
-function configured() {
-  return Boolean(process.env.SENZA_SHEETS_BRIDGE_URL && process.env.SENZA_SHEETS_TOKEN);
-}
 
 async function authorize(request: NextRequest, write = false) {
   const emergencyPin = request.headers.get("x-senza-emergency-pin");
@@ -43,48 +40,46 @@ function recoveredSnapshot(reason: string) {
   };
 }
 
-async function bridgeFetch(payload?: unknown) {
-  const base = process.env.SENZA_SHEETS_BRIDGE_URL!;
-  const token = process.env.SENZA_SHEETS_TOKEN!;
-  if (!payload) {
-    const url = new URL(base);
-    url.searchParams.set("token", token);
-    url.searchParams.set("action", "snapshot");
-    return fetch(url, { cache: "no-store" });
-  }
-  const url = new URL(base);
-  url.searchParams.set("token", token);
-  return fetch(url, { method: "POST", headers: { "content-type": "text/plain;charset=utf-8" }, body: JSON.stringify(payload), cache: "no-store" });
+async function operationsFetch(request: NextRequest, payload?: unknown) {
+  const pin = request.headers.get("x-senza-emergency-pin") || "";
+  return fetch(OPERATIONS_STORE_URL, {
+    method: payload ? "POST" : "GET",
+    headers: {
+      "x-senza-emergency-pin": pin,
+      ...(payload ? { "content-type": "application/json" } : {}),
+    },
+    body: payload ? JSON.stringify(payload) : undefined,
+    cache: "no-store",
+  });
 }
 
 export async function GET(request: NextRequest) {
   const auth = await authorize(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
-  if (!configured()) return NextResponse.json(recoveredSnapshot("Showing the uploaded August 26 workbook while live synchronization is being restored."));
   try {
-    const response = await bridgeFetch();
+    const response = await operationsFetch(request);
     const data = await response.json();
     if (!response.ok || data?.error || !Array.isArray(data?.inventory)) {
-      return NextResponse.json(recoveredSnapshot("Showing the uploaded August 26 workbook because the live Sheet is unavailable."));
+      return NextResponse.json(recoveredSnapshot("Showing the August 26 recovery snapshot because the operations database is temporarily unavailable."));
     }
-    return NextResponse.json({ configured: true, ...data });
+    return NextResponse.json({ configured: true, syncStatus: "live", ...data });
   } catch (error) {
-    console.error("SHEETS_BRIDGE_GET_FAILED", error);
-    return NextResponse.json(recoveredSnapshot("Showing the uploaded August 26 workbook because the live Sheet is unavailable."));
+    console.error("OPERATIONS_STORE_GET_FAILED", error);
+    return NextResponse.json(recoveredSnapshot("Showing the August 26 recovery snapshot because the operations database is temporarily unavailable."));
   }
 }
 
 export async function POST(request: NextRequest) {
   const auth = await authorize(request, true);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
-  if (!configured()) return NextResponse.json({ error: "Google Sheets bridge is not configured." }, { status: 503 });
   const payload = await request.json();
-  const allowed = ["stockOut", "purchaseRequest", "receivePurchase", "dailyIssue"];
+  const allowed = ["stockOut", "purchaseRequest", "reviewPurchase", "approvePurchase", "markOrdered", "deletePurchase", "receivePurchase", "dailyIssue"];
   if (!allowed.includes(payload?.action)) return NextResponse.json({ error: "Unsupported action." }, { status: 400 });
   try {
-    const response = await bridgeFetch({ ...payload, actorEmail: auth.email, actorRole: auth.role });
-    return NextResponse.json(await response.json(), { status: response.ok ? 200 : 400 });
-  } catch {
-    return NextResponse.json({ error: "The update could not be written to Google Sheets." }, { status: 502 });
+    const response = await operationsFetch(request, { ...payload, actorEmail: auth.email, actorRole: auth.role });
+    return NextResponse.json(await response.json(), { status: response.status });
+  } catch (error) {
+    console.error("OPERATIONS_STORE_POST_FAILED", error);
+    return NextResponse.json({ error: "The update could not be saved to the operations database." }, { status: 502 });
   }
 }
