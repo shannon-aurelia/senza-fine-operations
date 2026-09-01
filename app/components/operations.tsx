@@ -50,9 +50,11 @@ export type PurchaseRequest = {
 export type UsageRecord = { id: number; inventory_id: number; employee: string; department: string; location: string; quantity: number; uom: string; reason: string; remarks: string; created_at: string };
 export type ReceiptRecord = { id: number; pr_id: string; item_name: string; receiver: string; location: string; quantity: number; uom: string; expiry_date: string; created_at: string };
 export type StaffAccount = { id: string; name: string; email: string | null; department: string; role: string; active: boolean; must_change_password: boolean; last_login_at: string | null };
+export type CatalogItem = { id: string; category: string; itemName: string; sku: string; brand: string; uom: string; active: boolean };
 
 export type SheetData = {
   inventory: InventoryItem[];
+  catalog: CatalogItem[];
   purchases: PurchaseRequest[];
   usage: UsageRecord[];
   receipts: ReceiptRecord[];
@@ -131,6 +133,10 @@ export function normalizeSheetData(payload: Record<string, unknown>): SheetData 
   });
   return {
     inventory,
+    catalog: Array.isArray(payload.catalog) ? payload.catalog.map((raw) => {
+      const item = (raw || {}) as Record<string, unknown>;
+      return { id: text(item.id), category: text(item.category) || "Uncategorized", itemName: text(item.item_name || item.itemName), sku: text(item.sku), brand: text(item.brand), uom: text(item.uom) || "unit", active: item.active !== false };
+    }) : [],
     purchases,
     usage: Array.isArray(payload.usage) ? payload.usage.map((raw) => raw as UsageRecord) : [],
     receipts: Array.isArray(payload.receipts) ? payload.receipts.map((raw) => raw as ReceiptRecord) : [],
@@ -169,12 +175,27 @@ function EmptyState({ title, copy }: { title: string; copy: string }) {
   return <div className="empty-state"><span>◇</span><strong>{title}</strong><p>{copy}</p></div>;
 }
 
+function CreateItemModal({ data, submit, onClose, onCreated }: { data: SheetData; submit: SubmitAction; onClose: () => void; onCreated: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<{ tone: string; message: string } | null>(null);
+  const categories = useMemo(() => [...new Set(["Beef", "Chicken", "Vegetables", "Fruits", "Seafood", "Dairy", "Beverages", "Dry Goods", "Packaging", "Cleaning", "Utilities", ...data.catalog.map((item) => item.category), ...data.inventory.map((item) => item.type)].filter(Boolean))].sort(), [data.catalog, data.inventory]);
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setStatus(null);
+    const form = new FormData(event.currentTarget);
+    const result = await submit({ action: "createItem", category: text(form.get("category")), itemName: text(form.get("itemName")), sku: text(form.get("sku")), brand: text(form.get("brand")), uom: text(form.get("uom")) || "unit" });
+    setBusy(false); setStatus({ tone: result.ok ? "success" : "error", message: result.message });
+    if (result.ok) { onCreated(); window.setTimeout(onClose, 500); }
+  }
+  return <div className="modal-backdrop" onMouseDown={onClose}><form className="action-modal" onSubmit={create} onMouseDown={(event) => event.stopPropagation()}><div className="modal-heading"><div><p className="eyebrow">Item catalog</p><h3>Create a new item</h3><span>Add an item once, then select it in purchasing requests.</span></div><button type="button" onClick={onClose} aria-label="Close">×</button></div><div className="form-grid"><label><span>Category</span><input name="category" list="item-categories" required placeholder="Example: Beef"/></label><label><span>Item name</span><input name="itemName" required placeholder="Example: Sirloin"/></label><label><span>SKU</span><input name="sku" placeholder="Optional unique SKU"/></label><label><span>Brand</span><input name="brand" placeholder="Optional brand"/></label><label><span>Unit of measure</span><input name="uom" required defaultValue="kg" placeholder="kg, pack, pcs"/></label></div><datalist id="item-categories">{categories.map((category) => <option key={category} value={category}/>)}</datalist><StatusBanner status={status}/><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy ? "Creating…" : "Create item"}</button></div></form></div>;
+}
+
 export function InventoryView({ data, submit, onRefresh }: { data: SheetData; submit: SubmitAction; onRefresh: () => void }) {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.toLowerCase());
   const [location, setLocation] = useState("All");
   const [type, setType] = useState("All");
   const [selected, setSelected] = useState<InventoryItem | null>(null);
+  const [creatingItem, setCreatingItem] = useState(false);
   const [status, setStatus] = useState<{ tone: string; message: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const types = useMemo(() => [...new Set(data.inventory.map((item) => item.type).filter(Boolean))].sort(), [data.inventory]);
@@ -207,11 +228,12 @@ export function InventoryView({ data, submit, onRefresh }: { data: SheetData; su
   }
 
   return <section className="module-page">
-    <div className="module-heading"><div><p className="eyebrow">Live stock control</p><h2>Inventory</h2><p>Search every active batch and record stock movements without opening the spreadsheet.</p></div><button className="secondary-button" onClick={onRefresh}>↻ Refresh data</button></div>
+    <div className="module-heading"><div><p className="eyebrow">Live stock control</p><h2>Inventory</h2><p>Search stock batches and manage the master item and category catalog.</p></div><div className="heading-actions"><button className="primary-button" onClick={() => setCreatingItem(true)}>+ Create item</button><button className="secondary-button" onClick={onRefresh}>↻ Refresh data</button></div></div>
     <div className="mini-kpis"><article><span>Visible batches</span><strong>{filtered.length}</strong></article><article><span>Total visible quantity</span><strong>{total.toLocaleString()}</strong></article><article><span>Locations</span><strong>{data.locs.length}</strong></article></div>
     <div className="filter-bar"><label className="search-field"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search item, SKU, brand, or type" /></label><select value={location} onChange={(event) => setLocation(event.target.value)}><option>All</option>{data.locs.map((item) => <option key={item}>{item}</option>)}</select><select value={type} onChange={(event) => setType(event.target.value)}><option>All</option>{types.map((item) => <option key={item}>{item}</option>)}</select></div>
     <StatusBanner status={status}/>
     {filtered.length ? <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Item</th><th>SKU</th><th>Location</th><th>Received</th><th>Expiry</th><th>Quantity</th><th></th></tr></thead><tbody>{filtered.map((item, index) => { const days = daysUntil(item.expDate); return <tr key={`${item.sku}-${item.loc}-${item.expDate}-${index}`}><td><strong>{item.detail || item.name || "Unnamed item"}</strong><span>{item.type || "Uncategorized"}</span></td><td>{item.sku || "—"}</td><td><span className="location-chip">{item.loc || "Unknown"}</span></td><td>{formatDate(item.recDate)}</td><td><span className={days == null ? "risk neutral" : days < 0 ? "risk expired" : days <= 7 ? "risk warning" : "risk safe"}>{days == null ? "Not recorded" : days < 0 ? `Expired ${Math.abs(days)}d ago` : days === 0 ? "Expires today" : `${days} days`}</span></td><td><strong>{item.qty.toLocaleString()}</strong> {item.uom}</td><td><button className="row-button" onClick={() => { setSelected(item); setStatus(null); }}>Stock out</button></td></tr>; })}</tbody></table></div> : <EmptyState title="No inventory matches" copy="Try a different search or filter."/>}
+    {creatingItem ? <CreateItemModal data={data} submit={submit} onClose={() => setCreatingItem(false)} onCreated={onRefresh}/> : null}
     {selected ? <div className="modal-backdrop" onMouseDown={() => setSelected(null)}><form className="action-modal" onSubmit={stockOut} onMouseDown={(event) => event.stopPropagation()}><div className="modal-heading"><div><p className="eyebrow">Stock movement</p><h3>{selected.detail}</h3><span>{selected.qty} {selected.uom} available at {selected.loc}</span></div><button type="button" onClick={() => setSelected(null)} aria-label="Close">×</button></div><div className="form-grid"><label><span>Processed by</span><input name="name" required placeholder="Employee name" list="staff-names"/></label><label><span>Quantity out</span><input name="outQty" type="number" min="1" max={selected.qty} required/></label><label><span>Reason</span><select name="reason" required><option value="">Select reason</option>{data.reasons.map((reason) => <option key={reason}>{reason}</option>)}</select></label><label className="wide"><span>Remarks</span><textarea name="remarks" rows={3} placeholder="Optional note"/></label></div><datalist id="staff-names">{data.names.map((name) => <option key={name} value={name}/>)}</datalist><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setSelected(null)}>Cancel</button><button className="primary-button" disabled={submitting}>{submitting ? "Saving…" : "Confirm stock out"}</button></div></form></div> : null}
   </section>;
 }
@@ -225,7 +247,11 @@ export function PurchasingView({ data, submit, onRefresh, accessRole = "owner", 
   const [submitting, setSubmitting] = useState(false);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [approvalQuantities, setApprovalQuantities] = useState<Record<string, number>>({});
-  const catalog = useMemo(() => [...new Map(data.inventory.map((item) => [`${item.sku}|${item.detail}`, item])).values()].sort((a, b) => a.detail.localeCompare(b.detail)), [data.inventory]);
+  const catalog = useMemo(() => {
+    const masterItems = data.catalog.map((item) => ({ id: 0, type: item.category, sku: item.sku, brand: item.brand, name: item.itemName, detail: [item.brand, item.itemName].filter(Boolean).join(" - "), qty: 0, uom: item.uom, loc: "Outlet", expDate: "", recDate: "", remarks: "", weight: 0 }));
+    return [...new Map([...data.inventory, ...masterItems].map((item) => [`${item.sku}|${item.detail}`, item])).values()].sort((a, b) => a.detail.localeCompare(b.detail));
+  }, [data.inventory, data.catalog]);
+  const [creatingItem, setCreatingItem] = useState(false);
   const requestGroups = useMemo(() => {
     const groups = new Map<string, { requestId: string; prId: string; requestedAt: string; requestedBy: string; department: string; status: string; designatedReviewer: string; reviewedBy: string; reviewNote: string; approvalNote: string; items: PurchaseRequest[] }>();
     for (const item of data.purchases) {
@@ -244,7 +270,7 @@ export function PurchasingView({ data, submit, onRefresh, accessRole = "owner", 
     if (!validLines.length) { setStatus({ tone: "error", message: "Add at least one item with a requested quantity." }); return; }
     setSubmitting(true);
     const form = new FormData(event.currentTarget);
-    const result = await submit({ action: "purchaseRequest", name: text(form.get("name")), requestedBy: text(form.get("name")), email: text(form.get("email")), remarks: text(form.get("remarks")), items: validLines.map((line) => ({ type: data.inventory.find((item) => item.sku === line.sku)?.type || "", sku: line.sku, itemName: line.item, detail: line.item, qtyRequested: number(line.qty), qty: number(line.qty), uom: line.uom, location: line.location })) });
+    const result = await submit({ action: "purchaseRequest", name: text(form.get("name")), requestedBy: text(form.get("name")), email: text(form.get("email")), remarks: text(form.get("remarks")), items: validLines.map((line) => ({ type: catalog.find((item) => item.sku === line.sku && item.detail === line.item)?.type || "", sku: line.sku, itemName: line.item, detail: line.item, qtyRequested: number(line.qty), qty: number(line.qty), uom: line.uom, location: line.location })) });
     setStatus({ tone: result.ok ? "success" : "error", message: result.message });
     setSubmitting(false);
     if (result.ok) { setLines([{ id: Date.now(), item: "", sku: "", qty: "", uom: "", location: "Outlet" }]); onRefresh(); setTab("Review"); }
@@ -257,7 +283,8 @@ export function PurchasingView({ data, submit, onRefresh, accessRole = "owner", 
   const allowedTabs = accessRole === "owner" ? ["Request", "Review", "Approval", "History"] : accessRole === "reviewer" ? ["Request", "Review", "History"] : ["Request", "History"];
   const visibleGroups = (tab === "Review" ? requestGroups.filter((group) => group.status === "Submitted") : tab === "Approval" ? requestGroups.filter((group) => group.status === "Reviewed") : requestGroups).filter((group) => accessRole === "owner" || tab === "Review" || group.requestedBy === operatorName);
   return <section className="module-page">
-    <div className="module-heading"><div><p className="eyebrow">Request → Review → Owner approval</p><h2>Purchasing</h2><p>Staff submit requests, assigned reviewers check them, and the owner approves, edits, rejects, or deletes them.</p></div><span className="live-badge">Live database</span></div>
+    <div className="module-heading"><div><p className="eyebrow">Request → Review → Owner approval</p><h2>Purchasing</h2><p>Staff submit requests, assigned reviewers check them, and the owner approves, edits, rejects, or deletes them.</p></div><div className="heading-actions"><button className="secondary-button" onClick={() => setCreatingItem(true)}>+ Item not listed?</button><span className="live-badge">Live database</span></div></div>
+    {creatingItem ? <CreateItemModal data={data} submit={submit} onClose={() => setCreatingItem(false)} onCreated={onRefresh}/> : null}
     <div className="segmented-control purchase-tabs">{allowedTabs.map((item) => <button type="button" key={item} className={tab === item ? "active" : ""} onClick={() => { setTab(item); setStatus(null); }}>{item}{item === "Review" ? ` (${requestGroups.filter((group) => group.status === "Submitted").length})` : item === "Approval" ? ` (${requestGroups.filter((group) => group.status === "Reviewed").length})` : ""}</button>)}</div>
     <StatusBanner status={status}/>
     {tab === "Request" ? <form className="workflow-card" onSubmit={submitRequest}><div className="workflow-title"><div><span>Step 1 of 4</span><strong>New requisition</strong></div><div className="workflow-steps"><i className="active">Request</i><i>Review</i><i>Approval</i><i>Receive</i></div></div><div className="form-grid purchase-meta"><label><span>Requested by</span><select name="name" required defaultValue=""><option value="">Select requester</option>{["Nissa","Rere","Yusuf","Sendy","Hesti","Nadia","Aron","Yasri","Roni","Ahmad"].map((name) => <option key={name}>{name}</option>)}</select></label><label><span>Department</span><select name="department" required><option>Floor</option><option>Kitchen</option><option>Utilities</option></select></label><label><span>Email</span><input name="email" type="email" placeholder="Optional notification email"/></label></div><div className="line-items"><div className="line-header"><span>Item</span><span>Location</span><span>Qty</span><span>UOM</span><span></span></div>{lines.map((line) => <div className="line-row" key={line.id}><select value={line.item ? `${line.sku}|${line.item}` : ""} onChange={(event) => chooseItem(line.id, event.target.value)} required><option value="">Select inventory item</option>{catalog.map((item) => <option key={`${item.sku}|${item.detail}`} value={`${item.sku}|${item.detail}`}>{item.detail} · {item.sku}</option>)}</select><select value={line.location} onChange={(event) => updateLine(line.id, { location: event.target.value })}>{data.locs.map((loc) => <option key={loc}>{loc}</option>)}</select><input value={line.qty} onChange={(event) => updateLine(line.id, { qty: event.target.value })} type="number" min="0.01" step="any" placeholder="0" required/><input value={line.uom} onChange={(event) => updateLine(line.id, { uom: event.target.value })} placeholder="UOM" required/><button type="button" onClick={() => setLines((current) => current.length === 1 ? current : current.filter((item) => item.id !== line.id))} aria-label="Remove item">×</button></div>)}</div><button type="button" className="add-line" onClick={() => setLines((current) => [...current, { id: Date.now(), item: "", sku: "", qty: "", uom: "", location: data.locs[0] || "Outlet" }])}>+ Add another item</button><label className="remarks-field"><span>Request notes</span><textarea name="remarks" rows={3} placeholder="Supplier preference, urgency, or other context"/></label><div className="form-footer"><span>{lines.filter((line) => line.item).length} item(s) in request</span><button className="primary-button" disabled={submitting}>{submitting ? "Submitting…" : "Submit for review"}</button></div></form> : null}

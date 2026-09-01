@@ -140,15 +140,31 @@ Deno.serve(async (request: Request) => {
       return json({ ok: false, error: "Use Forgot password on the sign-in screen to change a password securely." }, 400);
     }
 
+    if (action === "createItem") {
+      const category = clean(body.category);
+      const itemName = clean(body.itemName || body.name);
+      const sku = clean(body.sku);
+      const brand = clean(body.brand);
+      const uom = clean(body.uom) || "unit";
+      if (!category || !itemName) return json({ ok: false, error: "Category and item name are required." }, 400);
+      const { data, error } = await supabase.from("sf_item_catalog").insert({
+        category, item_name: itemName, sku: sku || null, brand, uom, created_by: clean(actor.name),
+      }).select("id").single();
+      if (error) return json({ ok: false, error: error.code === "23505" ? "That item or SKU already exists in the catalog." : error.message }, 400);
+      await supabase.from("sf_audit_log").insert({ actor: clean(actor.name), action: "create", entity_type: "item_catalog", entity_id: data.id, details: { category, itemName, sku, brand, uom } });
+      return json({ ok: true, message: `${itemName} added under ${category}. It is now available for purchase requests.` });
+    }
+
     if (action === "snapshot") {
-      const [inventoryResult, purchaseResult, usageResult, receiptResult, userResult] = await Promise.all([
+      const [inventoryResult, purchaseResult, usageResult, receiptResult, userResult, catalogResult] = await Promise.all([
         supabase.from("sf_inventory").select("*").order("id"),
         supabase.from("sf_purchase_requests").select("*").order("requested_at", { ascending: false }),
         supabase.from("sf_usage_transactions").select("*").order("created_at", { ascending: false }).limit(2000),
         supabase.from("sf_receipts").select("*").order("created_at", { ascending: false }).limit(2000),
         isOwner ? supabase.from("sf_auth_profiles").select("id,name,email,department,role,active,created_at").eq("app_scope", "senza-fine").order("department").order("name") : Promise.resolve({ data: [], error: null }),
+        supabase.from("sf_item_catalog").select("id,category,item_name,sku,brand,uom,active").eq("active", true).order("category").order("item_name"),
       ]);
-      const firstError = inventoryResult.error || purchaseResult.error || usageResult.error || receiptResult.error || userResult.error;
+      const firstError = inventoryResult.error || purchaseResult.error || usageResult.error || receiptResult.error || userResult.error || catalogResult.error;
       if (firstError) throw firstError;
       const inventory = (inventoryResult.data || []).map((item) => ({
         id: item.id, type: item.type, sku: item.sku, brand: item.brand, name: item.item_name,
@@ -170,7 +186,7 @@ Deno.serve(async (request: Request) => {
           ordered: ["Ordered", "Partially Received", "Received"].includes(requestRow.status), complete: requestRow.status === "Received",
         }));
       });
-      return json({ ok: true, source: "supabase-live", recoveredAt: "2026-08-26", inventory, purchases, usage: usageResult.data || [], receipts: receiptResult.data || [], users: (userResult.data || []).map((user) => ({ ...user, must_change_password: false })), currentUser: { id: actor.id, name: actor.name, email: actor.email, department: actor.department, role: actor.role, mustChangePassword: actor.must_change_password }, names: ALL_STAFF, locs: ["Outlet", "Soho"], reasons: ["Used", "Processed", "Reallocated", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
+      return json({ ok: true, source: "supabase-live", recoveredAt: "2026-08-26", inventory, catalog: catalogResult.data || [], purchases, usage: usageResult.data || [], receipts: receiptResult.data || [], users: (userResult.data || []).map((user) => ({ ...user, must_change_password: false })), currentUser: { id: actor.id, name: actor.name, email: actor.email, department: actor.department, role: actor.role, mustChangePassword: actor.must_change_password }, names: ALL_STAFF, locs: ["Outlet", "Soho"], reasons: ["Used", "Processed", "Reallocated", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
     }
 
     if (action === "purchaseRequest") {

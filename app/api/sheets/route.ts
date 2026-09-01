@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
   }
   const auth = await authorize(request, true);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
-  const allowed = ["stockOut", "purchaseRequest", "reviewPurchase", "approvePurchase", "markOrdered", "deletePurchase", "receivePurchase", "dailyIssue", "saveUser", "changePassword", "logout"];
+  const allowed = ["stockOut", "purchaseRequest", "reviewPurchase", "approvePurchase", "markOrdered", "deletePurchase", "receivePurchase", "dailyIssue", "createItem", "saveUser", "changePassword", "logout"];
   if (!allowed.includes(payload?.action)) return NextResponse.json({ error: "Unsupported action." }, { status: 400 });
   try {
     const response = await operationsFetch(request, { ...payload, actorEmail: auth.email, actorRole: auth.role });

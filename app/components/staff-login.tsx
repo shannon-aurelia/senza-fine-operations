@@ -7,7 +7,7 @@ import { getSupabaseBrowserClient } from "../lib/supabase";
 export type StaffUser = { id: string; name: string; email: string; department: string; role: string; mustChangePassword?: boolean };
 type Mode = "login" | "signup" | "forgot";
 
-export default function StaffLogin(_props: { onLogin?: (token: string, user: StaffUser) => void; onRecovery?: (pin: string) => void }) {
+export default function StaffLogin() {
   const [mode, setMode] = useState<Mode>("login");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");

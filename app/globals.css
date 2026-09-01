@@ -132,3 +132,6 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .auth-message.success { color:#39c98a; }
 .staff-auth select { width:100%; }
 .google-button b { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:50%; background:#fff; color:#4285f4; font-family:Arial,sans-serif; }
+
+.heading-actions { display:flex; align-items:center; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+@media (max-width: 720px) { .heading-actions { width:100%; justify-content:stretch; } .heading-actions button { flex:1; } }

@@ -98,7 +98,7 @@ export default function Home() {
   const [emergencyPin, setEmergencyPin] = useState("");
   const [staffToken, setStaffToken] = useState("");
   const [staffUser, setStaffUser] = useState<StaffUser | null>(null);
-  const [sheetData, setSheetData] = useState<SheetData>({ inventory: [], purchases: [], usage: [], receipts: [], users: [], names: [], locs: ["Soho", "Outlet"], reasons: ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
+  const [sheetData, setSheetData] = useState<SheetData>({ inventory: [], catalog: [], purchases: [], usage: [], receipts: [], users: [], names: [], locs: ["Soho", "Outlet"], reasons: ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
   const [refreshKey, setRefreshKey] = useState(0);
   const authRequired = false;
   useEffect(() => {
@@ -179,9 +179,7 @@ export default function Home() {
   };
   const toggleTheme = () => setTheme((current) => { const next = current === "dark" ? "light" : "dark"; window.localStorage.setItem("senza-theme", next); return next; });
   if (!accessReady || (!emergencyPin && !staffToken && !authReady)) return <main className="auth-loading">Opening Senza Fine Operations…</main>;
-  const completeStaffLogin = (token: string, user: StaffUser) => { window.sessionStorage.setItem("senza-staff-session", token); window.sessionStorage.setItem("senza-staff-user", JSON.stringify(user)); window.sessionStorage.removeItem("senza-emergency-pin"); setEmergencyPin(""); setStaffToken(token); setStaffUser(user); };
-  const completeRecovery = (pin: string) => { window.sessionStorage.setItem("senza-emergency-pin", pin); window.sessionStorage.removeItem("senza-staff-session"); window.sessionStorage.removeItem("senza-staff-user"); setStaffToken(""); setStaffUser(null); setEmergencyPin(pin); };
-  if (!emergencyPin && !staffToken && !session) return <StaffLogin onLogin={completeStaffLogin} onRecovery={completeRecovery}/>;
+  if (!emergencyPin && !staffToken && !session) return <StaffLogin/>;
   if (authRequired && !session && !staffToken) return <AuthScreen setupRequired={!isSupabaseConfigured()} />;
   const displayName = staffUser?.name || session?.user.user_metadata?.full_name || session?.user.user_metadata?.name || "Owner";
   const initial = String(displayName).charAt(0).toUpperCase();
