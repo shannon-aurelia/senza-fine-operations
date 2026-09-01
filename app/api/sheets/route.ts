@@ -9,6 +9,19 @@ const OPERATIONS_STORE_URL = "https://mvfecvoozjwhmppqgued.supabase.co/functions
 export const dynamic = "force-dynamic";
 
 async function authorize(request: NextRequest, write = false) {
+  const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  const supabase = getSupabaseServerClient();
+  if (token && supabase) {
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data.user) return { ok: false, status: 401, error: "Your session is no longer valid." };
+    const { data: profile } = await supabase.from("sf_auth_profiles").select("email, name, department, role, active").eq("id", data.user.id).single();
+    if (!profile?.active) return { ok: false, status: 403, error: "Your Senza Fine account is waiting for Owner approval." };
+    if (write && !["owner", "reviewer", "staff"].includes(profile.role)) {
+      return { ok: false, status: 403, error: "You do not have permission for this action." };
+    }
+    return { ok: true, email: profile.email, role: profile.role, profile, token };
+  }
+
   if (request.headers.get("x-senza-session")) return { ok: true, email: "", role: "session" };
   const emergencyPin = request.headers.get("x-senza-emergency-pin");
   if (emergencyPin) {
@@ -18,37 +31,21 @@ async function authorize(request: NextRequest, write = false) {
       return { ok: true, email: "owner-recovery@senza-fine.local", role: "owner" };
     }
   }
-  const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  const supabase = getSupabaseServerClient();
-  if (!token || !supabase) return { ok: false, status: 401, error: "Sign in is required." };
-  const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data.user) return { ok: false, status: 401, error: "Your session is no longer valid." };
-  const { data: profile } = await supabase.from("profiles").select("email, role, active").eq("id", data.user.id).single();
-  if (!profile?.active) return { ok: false, status: 403, error: "Your Senza Fine account is awaiting approval." };
-  if (write && !["system_admin", "owner", "manager", "purchasing", "kitchen", "staff"].includes(profile.role)) {
-    return { ok: false, status: 403, error: "You do not have permission for this action." };
-  }
-  return { ok: true, email: profile.email, role: profile.role };
+  return { ok: false, status: 401, error: "Sign in is required." };
 }
 
 function recoveredSnapshot(reason: string) {
-  return {
-    configured: false,
-    ...recoveredInventory,
-    source: "uploaded-workbook-fallback",
-    syncStatus: "snapshot",
-    warning: reason,
-  };
+  return { configured: false, ...recoveredInventory, source: "uploaded-workbook-fallback", syncStatus: "snapshot", warning: reason };
 }
 
 async function operationsFetch(request: NextRequest, payload?: unknown) {
-  const pin = request.headers.get("x-senza-emergency-pin") || "";
-  const session = request.headers.get("x-senza-session") || "";
+  const authorization = request.headers.get("authorization") || "";
   return fetch(OPERATIONS_STORE_URL, {
     method: payload ? "POST" : "GET",
     headers: {
-      "x-senza-emergency-pin": pin,
-      "x-senza-session": session,
+      ...(authorization ? { authorization } : {}),
+      "x-senza-emergency-pin": request.headers.get("x-senza-emergency-pin") || "",
+      "x-senza-session": request.headers.get("x-senza-session") || "",
       ...(payload ? { "content-type": "application/json" } : {}),
     },
     body: payload ? JSON.stringify(payload) : undefined,

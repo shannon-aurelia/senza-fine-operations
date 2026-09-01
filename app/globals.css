@@ -124,3 +124,11 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .auth-mode { display:grid;grid-template-columns:1fr 1fr;gap:5px;max-width:430px;margin-top:26px;padding:5px;border:1px solid #284967;border-radius:11px;background:#0b2038; }.auth-mode button { height:40px;border:0;border-radius:8px;background:transparent;color:#8fa7bf;font-weight:700;cursor:pointer; }.auth-mode button.active { background:#173a60;color:white;box-shadow:inset 0 0 0 1px #32658f; }
 .account-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px; }.account-grid article { display:grid;grid-template-columns:48px 1fr auto auto;gap:13px;align-items:center;padding:18px;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:var(--shadow); }.account-avatar { width:46px;height:46px;display:grid;place-items:center;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--violet));color:white;font-size:18px;font-weight:800; }.account-copy span,.account-copy small { color:var(--muted);font-size:11px; }.account-copy h3 { margin:4px 0;font-size:17px; }.account-copy p { margin:0 0 4px;font-size:12px; }.password-row { display:grid;grid-template-columns:1fr auto;gap:9px; }.active-check { display:flex!important;flex-direction:row!important;align-items:center; }.active-check input { width:18px!important;height:18px; }
 @media(max-width:900px){.account-grid{grid-template-columns:1fr}}@media(max-width:560px){.account-grid article{grid-template-columns:43px 1fr}.account-grid article>.risk,.account-grid article>.row-button{grid-column:2;width:max-content}}
+
+
+.auth-divider { display:flex; align-items:center; gap:12px; margin:16px 0; color:var(--muted); font-size:12px; }
+.auth-divider::before, .auth-divider::after { content:""; height:1px; flex:1; background:var(--border); }
+.auth-text-button { display:inline-flex; justify-content:center; width:100%; margin-top:14px; border:0; background:transparent; color:var(--accent); font:inherit; font-weight:650; text-decoration:none; cursor:pointer; }
+.auth-message.success { color:#39c98a; }
+.staff-auth select { width:100%; }
+.google-button b { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:50%; background:#fff; color:#4285f4; font-family:Arial,sans-serif; }

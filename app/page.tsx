@@ -172,7 +172,7 @@ export default function Home() {
   if (authRequired && !session && !staffToken) return <AuthScreen setupRequired={!isSupabaseConfigured()} />;
   const displayName = staffUser?.name || session?.user.user_metadata?.full_name || session?.user.user_metadata?.name || "Owner";
   const initial = String(displayName).charAt(0).toUpperCase();
-  const isOwner = Boolean(emergencyPin) || staffUser?.role === "owner";
+  const isOwner = Boolean(emergencyPin) || staffUser?.role === "owner" || session?.user.email?.toLowerCase() === "aureliawwshan@gmail.com";
   const signOut = async () => { if (staffToken) await submitAction({ action: "logout" }); await getSupabaseBrowserClient()?.auth.signOut(); window.sessionStorage.removeItem("senza-emergency-pin"); window.sessionStorage.removeItem("senza-staff-session"); window.sessionStorage.removeItem("senza-staff-user"); setEmergencyPin(""); setStaffToken(""); setStaffUser(null); };
   return (
     <main className="app-shell" data-theme={theme}>
