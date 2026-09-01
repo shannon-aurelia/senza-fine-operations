@@ -47,7 +47,7 @@ export default function StaffLogin(_props: { onLogin?: (token: string, user: Sta
           email,
           password,
           options: {
-            data: { full_name: name, department },
+            data: { full_name: name, department, senza_fine: "true" },
             emailRedirectTo: window.location.origin,
           },
         });

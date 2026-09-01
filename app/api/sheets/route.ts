@@ -14,7 +14,7 @@ async function authorize(request: NextRequest, write = false) {
   if (token && supabase) {
     const { data, error } = await supabase.auth.getUser(token);
     if (error || !data.user) return { ok: false, status: 401, error: "Your session is no longer valid." };
-    const { data: profile } = await supabase.from("sf_auth_profiles").select("email, name, department, role, active").eq("id", data.user.id).single();
+    const { data: profile } = await supabase.from("sf_auth_profiles").select("email, name, department, role, active").eq("id", data.user.id).eq("app_scope", "senza-fine").single();
     if (!profile?.active) return { ok: false, status: 403, error: "Your Senza Fine account is waiting for Owner approval." };
     if (write && !["owner", "reviewer", "staff"].includes(profile.role)) {
       return { ok: false, status: 403, error: "You do not have permission for this action." };

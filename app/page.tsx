@@ -116,8 +116,21 @@ export default function Home() {
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) { window.queueMicrotask(() => setAuthReady(true)); return; }
-    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setAuthReady(true); });
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => { setSession(nextSession); setAuthReady(true); });
+    const prepareSession = async (nextSession: Session | null) => {
+      if (nextSession?.user?.email) {
+        const user = nextSession.user;
+        const { data: profile } = await supabase.from("sf_auth_profiles").select("app_scope").eq("id", user.id).maybeSingle();
+        if (profile?.app_scope !== "senza-fine") {
+          const name = String(user.user_metadata?.full_name || user.user_metadata?.name || user.email.split("@")[0]);
+          const department = ["Floor", "Kitchen", "Utilities", "Staff"].includes(user.user_metadata?.department) ? user.user_metadata.department : "Staff";
+          await supabase.from("sf_auth_profiles").upsert({ id: user.id, name, email: user.email.toLowerCase(), department, role: "staff", active: false, app_scope: "senza-fine", updated_at: new Date().toISOString() }, { onConflict: "id" });
+        }
+      }
+      setSession(nextSession);
+      setAuthReady(true);
+    };
+    supabase.auth.getSession().then(({ data }) => { void prepareSession(data.session); });
+    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => { window.setTimeout(() => { void prepareSession(nextSession); }, 0); });
     return () => data.subscription.unsubscribe();
   }, []);
   useEffect(() => {

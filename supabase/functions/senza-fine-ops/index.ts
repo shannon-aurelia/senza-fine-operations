@@ -98,7 +98,7 @@ Deno.serve(async (request: Request) => {
     if (bearerToken) {
       const { data: authData, error: authError } = await supabase.auth.getUser(bearerToken);
       if (authError || !authData.user) return json({ ok: false, error: "Your session is no longer valid." }, 401);
-      const { data: profile } = await supabase.from("sf_auth_profiles").select("*").eq("id", authData.user.id).maybeSingle();
+      const { data: profile } = await supabase.from("sf_auth_profiles").select("*").eq("id", authData.user.id).eq("app_scope", "senza-fine").maybeSingle();
       if (!profile?.active) return json({ ok: false, error: "Your Senza Fine account is waiting for Owner approval." }, 403);
       authProfile = profile as Record<string, unknown>;
     }
@@ -126,7 +126,7 @@ Deno.serve(async (request: Request) => {
         return json({ ok: false, error: "Complete the staff name, department, and role." }, 400);
       }
       let lookup = supabase.from("sf_auth_profiles").select("id");
-      lookup = id ? lookup.eq("id", id) : lookup.eq("email", email);
+      lookup = id ? lookup.eq("id", id).eq("app_scope", "senza-fine") : lookup.eq("email", email).eq("app_scope", "senza-fine");
       const { data: existing } = await lookup.maybeSingle();
       if (!existing) return json({ ok: false, error: "This employee must create an account first using the same email." }, 404);
       const { error } = await supabase.from("sf_auth_profiles").update({
@@ -146,7 +146,7 @@ Deno.serve(async (request: Request) => {
         supabase.from("sf_purchase_requests").select("*").order("requested_at", { ascending: false }),
         supabase.from("sf_usage_transactions").select("*").order("created_at", { ascending: false }).limit(2000),
         supabase.from("sf_receipts").select("*").order("created_at", { ascending: false }).limit(2000),
-        isOwner ? supabase.from("sf_auth_profiles").select("id,name,email,department,role,active,created_at").order("department").order("name") : Promise.resolve({ data: [], error: null }),
+        isOwner ? supabase.from("sf_auth_profiles").select("id,name,email,department,role,active,created_at").eq("app_scope", "senza-fine").order("department").order("name") : Promise.resolve({ data: [], error: null }),
       ]);
       const firstError = inventoryResult.error || purchaseResult.error || usageResult.error || receiptResult.error || userResult.error;
       if (firstError) throw firstError;
