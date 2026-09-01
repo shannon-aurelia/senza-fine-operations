@@ -9,6 +9,7 @@ const OPERATIONS_STORE_URL = "https://mvfecvoozjwhmppqgued.supabase.co/functions
 export const dynamic = "force-dynamic";
 
 async function authorize(request: NextRequest, write = false) {
+  if (request.headers.get("x-senza-session")) return { ok: true, email: "", role: "session" };
   const emergencyPin = request.headers.get("x-senza-emergency-pin");
   if (emergencyPin) {
     const supplied = createHash("sha256").update(emergencyPin.trim().toUpperCase()).digest();
@@ -42,10 +43,12 @@ function recoveredSnapshot(reason: string) {
 
 async function operationsFetch(request: NextRequest, payload?: unknown) {
   const pin = request.headers.get("x-senza-emergency-pin") || "";
+  const session = request.headers.get("x-senza-session") || "";
   return fetch(OPERATIONS_STORE_URL, {
     method: payload ? "POST" : "GET",
     headers: {
       "x-senza-emergency-pin": pin,
+      "x-senza-session": session,
       ...(payload ? { "content-type": "application/json" } : {}),
     },
     body: payload ? JSON.stringify(payload) : undefined,
@@ -59,6 +62,7 @@ export async function GET(request: NextRequest) {
   try {
     const response = await operationsFetch(request);
     const data = await response.json();
+    if (response.status === 401 || response.status === 403) return NextResponse.json(data, { status: response.status });
     if (!response.ok || data?.error || !Array.isArray(data?.inventory)) {
       return NextResponse.json(recoveredSnapshot("Showing the August 26 recovery snapshot because the operations database is temporarily unavailable."));
     }
@@ -70,10 +74,14 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const payload = await request.json();
+  if (payload?.action === "login") {
+    const response = await operationsFetch(request, payload);
+    return NextResponse.json(await response.json(), { status: response.status });
+  }
   const auth = await authorize(request, true);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
-  const payload = await request.json();
-  const allowed = ["stockOut", "purchaseRequest", "reviewPurchase", "approvePurchase", "markOrdered", "deletePurchase", "receivePurchase", "dailyIssue"];
+  const allowed = ["stockOut", "purchaseRequest", "reviewPurchase", "approvePurchase", "markOrdered", "deletePurchase", "receivePurchase", "dailyIssue", "saveUser", "changePassword", "logout"];
   if (!allowed.includes(payload?.action)) return NextResponse.json({ error: "Unsupported action." }, { status: 400 });
   try {
     const response = await operationsFetch(request, { ...payload, actorEmail: auth.email, actorRole: auth.role });

@@ -21,6 +21,27 @@ async function sha256(value: string) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function randomToken(bytes = 32) {
+  const value = crypto.getRandomValues(new Uint8Array(bytes));
+  return [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function passwordHash(password: string, salt: string) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: new TextEncoder().encode(salt), iterations: 150_000 }, key, 256);
+  return [...new Uint8Array(bits)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sessionUser(supabase: ReturnType<typeof createClient>, token: string) {
+  if (!token) return null;
+  const tokenHash = await sha256(token);
+  const { data } = await supabase.from("sf_sessions").select("user_id,expires_at,sf_users(*)").eq("token_hash", tokenHash).gt("expires_at", new Date().toISOString()).maybeSingle();
+  const relation = data?.sf_users as unknown;
+  const user = Array.isArray(relation) ? relation[0] : relation;
+  if (!user || !(user as Record<string, unknown>).active) return null;
+  return user as Record<string, unknown>;
+}
+
 function departmentFor(name: string) {
   if (FLOOR.includes(name)) return "Floor";
   if (KITCHEN.includes(name)) return "Kitchen";
@@ -49,9 +70,6 @@ async function savePhoto(supabase: ReturnType<typeof createClient>, file: unknow
 
 Deno.serve(async (request: Request) => {
   try {
-    const pin = request.headers.get("x-senza-emergency-pin") || "";
-    if (!pin || await sha256(pin) !== PIN_HASH) return json({ ok: false, error: "Unauthorized" }, 401);
-
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -60,14 +78,69 @@ Deno.serve(async (request: Request) => {
     const body = request.method === "POST" ? await request.json().catch(() => ({})) as Record<string, unknown> : {};
     const action = request.method === "GET" ? "snapshot" : clean(body.action) || "snapshot";
 
+    if (action === "login") {
+      const email = clean(body.email).toLowerCase();
+      const password = clean(body.password);
+      const { data: user } = await supabase.from("sf_users").select("*").eq("email", email).eq("active", true).maybeSingle();
+      if (!user?.password_salt || !user.password_hash || await passwordHash(password, user.password_salt) !== user.password_hash) return json({ ok: false, error: "Email or password is incorrect." }, 401);
+      const token = randomToken();
+      const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+      await supabase.from("sf_sessions").delete().lt("expires_at", new Date().toISOString());
+      const { error } = await supabase.from("sf_sessions").insert({ token_hash: await sha256(token), user_id: user.id, expires_at: expiresAt });
+      if (error) throw error;
+      await supabase.from("sf_users").update({ last_login_at: new Date().toISOString() }).eq("id", user.id);
+      return json({ ok: true, token, expiresAt, user: { id: user.id, name: user.name, email: user.email, department: user.department, role: user.role, mustChangePassword: user.must_change_password } });
+    }
+
+    const pin = request.headers.get("x-senza-emergency-pin") || "";
+    const recoveryOwner = Boolean(pin) && await sha256(pin.trim().toUpperCase()) === PIN_HASH;
+    const storedUser = recoveryOwner ? null : await sessionUser(supabase, request.headers.get("x-senza-session") || "");
+    if (!recoveryOwner && !storedUser) return json({ ok: false, error: "Sign in is required." }, 401);
+    const actor = recoveryOwner ? { id: "recovery", name: "Owner", email: "", department: "Owner", role: "owner", must_change_password: false } : storedUser!;
+    const isOwner = actor.role === "owner";
+
+    if (action === "logout") {
+      const token = request.headers.get("x-senza-session") || "";
+      if (token) await supabase.from("sf_sessions").delete().eq("token_hash", await sha256(token));
+      return json({ ok: true, message: "Signed out." });
+    }
+
+    if (action === "saveUser") {
+      if (!isOwner) return json({ ok: false, error: "Only the Owner can manage staff accounts." }, 403);
+      const name = clean(body.name); const email = clean(body.email).toLowerCase(); const department = clean(body.department); const role = clean(body.role);
+      const password = clean(body.password);
+      if (!name || !email || !email.includes("@") || !["Owner", "Floor", "Kitchen", "Utilities"].includes(department) || !["owner", "reviewer", "staff"].includes(role)) return json({ ok: false, error: "Complete the name, email, department, and role." }, 400);
+      const values: Record<string, unknown> = { name, email, department, role, active: body.active !== false, updated_at: new Date().toISOString() };
+      if (password) {
+        if (password.length < 10) return json({ ok: false, error: "Temporary password must contain at least 10 characters." }, 400);
+        const salt = randomToken(16); values.password_salt = salt; values.password_hash = await passwordHash(password, salt); values.must_change_password = true;
+      }
+      const { data: existing } = await supabase.from("sf_users").select("id,password_hash").eq("name", name).maybeSingle();
+      if (!existing?.password_hash && !password) return json({ ok: false, error: "Set a temporary password for this account." }, 400);
+      const mutation = existing ? supabase.from("sf_users").update(values).eq("id", existing.id) : supabase.from("sf_users").insert(values);
+      const { error } = await mutation;
+      if (error) return json({ ok: false, error: error.code === "23505" ? "That email is already used by another account." : error.message }, 400);
+      return json({ ok: true, message: `${name}'s account has been saved.` });
+    }
+
+    if (action === "changePassword") {
+      if (recoveryOwner) return json({ ok: false, error: "Sign in to an individual account before changing its password." }, 400);
+      const password = clean(body.password);
+      if (password.length < 10) return json({ ok: false, error: "New password must contain at least 10 characters." }, 400);
+      const salt = randomToken(16); const { error } = await supabase.from("sf_users").update({ password_salt: salt, password_hash: await passwordHash(password, salt), must_change_password: false, updated_at: new Date().toISOString() }).eq("id", actor.id);
+      if (error) throw error;
+      return json({ ok: true, message: "Password updated." });
+    }
+
     if (action === "snapshot") {
-      const [inventoryResult, purchaseResult, usageResult, receiptResult] = await Promise.all([
+      const [inventoryResult, purchaseResult, usageResult, receiptResult, userResult] = await Promise.all([
         supabase.from("sf_inventory").select("*").order("id"),
         supabase.from("sf_purchase_requests").select("*").order("requested_at", { ascending: false }),
         supabase.from("sf_usage_transactions").select("*").order("created_at", { ascending: false }).limit(2000),
         supabase.from("sf_receipts").select("*").order("created_at", { ascending: false }).limit(2000),
+        isOwner ? supabase.from("sf_users").select("id,name,email,department,role,active,must_change_password,last_login_at").order("department").order("name") : Promise.resolve({ data: [], error: null }),
       ]);
-      const firstError = inventoryResult.error || purchaseResult.error || usageResult.error || receiptResult.error;
+      const firstError = inventoryResult.error || purchaseResult.error || usageResult.error || receiptResult.error || userResult.error;
       if (firstError) throw firstError;
       const inventory = (inventoryResult.data || []).map((item) => ({
         id: item.id, type: item.type, sku: item.sku, brand: item.brand, name: item.item_name,
@@ -89,12 +162,12 @@ Deno.serve(async (request: Request) => {
           ordered: ["Ordered", "Partially Received", "Received"].includes(requestRow.status), complete: requestRow.status === "Received",
         }));
       });
-      return json({ ok: true, source: "supabase-live", recoveredAt: "2026-08-26", inventory, purchases, usage: usageResult.data || [], receipts: receiptResult.data || [], names: ALL_STAFF, locs: ["Outlet", "Soho"], reasons: ["Used", "Processed", "Reallocated", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
+      return json({ ok: true, source: "supabase-live", recoveredAt: "2026-08-26", inventory, purchases, usage: usageResult.data || [], receipts: receiptResult.data || [], users: userResult.data || [], currentUser: { id: actor.id, name: actor.name, email: actor.email, department: actor.department, role: actor.role, mustChangePassword: actor.must_change_password }, names: ALL_STAFF, locs: ["Outlet", "Soho"], reasons: ["Used", "Processed", "Reallocated", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
     }
 
     if (action === "purchaseRequest") {
-      const requester = clean(body.requestedBy || body.name);
-      const department = departmentFor(requester);
+      const requester = isOwner ? clean(body.requestedBy || body.name) : clean(actor.name);
+      const department = isOwner ? departmentFor(requester) : clean(actor.department);
       if (!ALL_STAFF.includes(requester) || !reviewerFor(department)) return json({ ok: false, error: "Choose an authorized Floor, Kitchen, or Utilities requester." }, 400);
       const rawItems = Array.isArray(body.items) ? body.items : [];
       const items = rawItems.map((raw, index) => {
@@ -116,13 +189,15 @@ Deno.serve(async (request: Request) => {
       const { data: current, error: findError } = await supabase.from("sf_purchase_requests").select("*").eq("id", requestId).single();
       if (findError || !current) return json({ ok: false, error: "Purchase request not found." }, 404);
       if (action === "deletePurchase") {
+        if (!isOwner) return json({ ok: false, error: "Only the Owner can delete purchase requests." }, 403);
         const { error } = await supabase.from("sf_purchase_requests").delete().eq("id", requestId);
         if (error) throw error;
         await supabase.from("sf_audit_log").insert({ actor: clean(body.actor) || "Owner", action: "delete", entity_type: "purchase_request", entity_id: requestId, details: { prId: current.pr_id } });
         return json({ ok: true, message: `Purchase request ${current.pr_id} deleted.` });
       }
       if (action === "reviewPurchase") {
-        const reviewer = clean(body.reviewer);
+        const reviewer = isOwner ? clean(body.reviewer) : clean(actor.name);
+        if (!isOwner && actor.role !== "reviewer") return json({ ok: false, error: "This account is not assigned as a reviewer." }, 403);
         if (reviewer !== current.designated_reviewer) return json({ ok: false, error: `This request must be reviewed by ${current.designated_reviewer}.` }, 403);
         if (current.status !== "Submitted") return json({ ok: false, error: "Only submitted requests can be reviewed." }, 400);
         const { error } = await supabase.from("sf_purchase_requests").update({ status: "Reviewed", reviewed_by: reviewer, reviewed_at: new Date().toISOString(), review_note: clean(body.note), updated_at: new Date().toISOString() }).eq("id", requestId);
@@ -130,6 +205,7 @@ Deno.serve(async (request: Request) => {
         return json({ ok: true, message: `${current.pr_id} reviewed and sent to the owner for approval.` });
       }
       if (action === "approvePurchase") {
+        if (!isOwner) return json({ ok: false, error: "Only the Owner can approve or reject requests." }, 403);
         if (current.status !== "Reviewed") return json({ ok: false, error: "The reviewer must complete review first." }, 400);
         const decision = clean(body.decision) === "Rejected" ? "Rejected" : "Approved";
         const items = Array.isArray(body.items) && body.items.length ? body.items : current.items;
@@ -137,6 +213,7 @@ Deno.serve(async (request: Request) => {
         if (error) throw error;
         return json({ ok: true, message: `${current.pr_id} ${decision.toLowerCase()}.` });
       }
+      if (!isOwner) return json({ ok: false, error: "Only the Owner can mark requests as ordered." }, 403);
       if (!["Approved", "Ordered"].includes(current.status)) return json({ ok: false, error: "Only approved requests can be marked ordered." }, 400);
       const { error } = await supabase.from("sf_purchase_requests").update({ status: "Ordered", updated_at: new Date().toISOString() }).eq("id", requestId);
       if (error) throw error;
@@ -146,7 +223,7 @@ Deno.serve(async (request: Request) => {
     if (action === "receivePurchase") {
       const requestId = clean(body.requestId);
       const itemKey = clean(body.itemKey);
-      const receiver = clean(body.receiver);
+      const receiver = isOwner ? clean(body.receiver) : clean(actor.name);
       if (!ALL_STAFF.includes(receiver)) return json({ ok: false, error: "Choose a valid staff member." }, 400);
       const { data: current, error: findError } = await supabase.from("sf_purchase_requests").select("*").eq("id", requestId).single();
       if (findError || !current) return json({ ok: false, error: "Purchase request not found." }, 404);
@@ -179,8 +256,8 @@ Deno.serve(async (request: Request) => {
     }
 
     if (action === "stockOut") {
-      const employee = clean(body.name || body.employee);
-      const department = clean(body.department) || departmentFor(employee);
+      const employee = isOwner ? clean(body.name || body.employee) : clean(actor.name);
+      const department = isOwner ? clean(body.department) || departmentFor(employee) : clean(actor.department);
       if (!ALL_STAFF.includes(employee)) return json({ ok: false, error: "Choose a valid staff member." }, 400);
       let query = supabase.from("sf_inventory").select("*");
       if (body.inventoryId) query = query.eq("id", amount(body.inventoryId));
@@ -197,9 +274,9 @@ Deno.serve(async (request: Request) => {
     }
 
     if (action === "dailyIssue") {
-      const employee = clean(body.name);
+      const employee = isOwner ? clean(body.name) : clean(actor.name);
       if (!ALL_STAFF.includes(employee)) return json({ ok: false, error: "Choose a valid staff member." }, 400);
-      const { error } = await supabase.from("sf_daily_operations").insert({ employee, department: clean(body.department), location: clean(body.location), shift: clean(body.shift), checks: Array.isArray(body.checks) ? body.checks : [], issues: clean(body.issues || body.remarks) });
+      const { error } = await supabase.from("sf_daily_operations").insert({ employee, department: isOwner ? clean(body.department) : clean(actor.department), location: clean(body.location), shift: clean(body.shift), checks: Array.isArray(body.checks) ? body.checks : [], issues: clean(body.issues || body.remarks) });
       if (error) throw error;
       return json({ ok: true, message: "Shift checklist saved." });
     }

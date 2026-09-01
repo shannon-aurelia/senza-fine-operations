@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import AuthScreen from "./components/auth-screen";
-import EmergencyAccess from "./components/emergency-access";
-import { DailyOperationsView, daysUntil, ExpiryView, InsightsView, InventoryView, normalizeSheetData, PurchasingView, ReceivingView, ReportsView, SheetData, UsageView } from "./components/operations";
+import StaffLogin, { StaffUser } from "./components/staff-login";
+import { DailyOperationsView, daysUntil, ExpiryView, InsightsView, InventoryView, normalizeSheetData, PurchasingView, ReceivingView, ReportsView, SheetData, UsageView, UsersView } from "./components/operations";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "./lib/supabase";
 
 type Theme = "dark" | "light";
@@ -16,6 +16,7 @@ const navItems = [
   ["Purchasing", "▤"],
   ["Receiving", "↓"],
   ["Reports", "▥"],
+  ["Users", "♙"],
   ["Expiry & Waste", "◷"],
   ["Daily Operations", "✓"],
   ["Azumie Insights", "✦"],
@@ -95,13 +96,19 @@ export default function Home() {
   const [authReady, setAuthReady] = useState(false);
   const [accessReady, setAccessReady] = useState(false);
   const [emergencyPin, setEmergencyPin] = useState("");
-  const [sheetData, setSheetData] = useState<SheetData>({ inventory: [], purchases: [], usage: [], receipts: [], names: [], locs: ["Soho", "Outlet"], reasons: ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
+  const [staffToken, setStaffToken] = useState("");
+  const [staffUser, setStaffUser] = useState<StaffUser | null>(null);
+  const [sheetData, setSheetData] = useState<SheetData>({ inventory: [], purchases: [], usage: [], receipts: [], users: [], names: [], locs: ["Soho", "Outlet"], reasons: ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
   const [refreshKey, setRefreshKey] = useState(0);
   const authRequired = false;
   useEffect(() => {
     const savedPin = window.sessionStorage.getItem("senza-emergency-pin") || "";
+    const savedToken = window.sessionStorage.getItem("senza-staff-session") || "";
+    const savedUser = window.sessionStorage.getItem("senza-staff-user");
     window.queueMicrotask(() => {
       setEmergencyPin(savedPin);
+      setStaffToken(savedToken);
+      if (savedUser) { try { setStaffUser(JSON.parse(savedUser) as StaffUser); } catch { window.sessionStorage.removeItem("senza-staff-user"); } }
       setAccessReady(true);
     });
   }, []);
@@ -114,7 +121,7 @@ export default function Home() {
     return () => data.subscription.unsubscribe();
   }, []);
   useEffect(() => {
-    if (!accessReady || (!emergencyPin && !session) || (authRequired && !session && !emergencyPin)) return;
+    if (!accessReady || (!emergencyPin && !staffToken && !session) || (authRequired && !session && !emergencyPin && !staffToken)) return;
     let active = true;
     const sync = async () => {
       try {
@@ -123,6 +130,7 @@ export default function Home() {
           headers: {
             ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
             ...(emergencyPin ? { "x-senza-emergency-pin": emergencyPin } : {}),
+            ...(staffToken ? { "x-senza-session": staffToken } : {}),
           },
         });
         const data = await response.json();
@@ -135,6 +143,9 @@ export default function Home() {
               window.sessionStorage.removeItem("senza-emergency-pin");
               setEmergencyPin("");
             }
+            if (response.status === 401 && staffToken) {
+              window.sessionStorage.removeItem("senza-staff-session"); window.sessionStorage.removeItem("senza-staff-user"); setStaffToken(""); setStaffUser(null);
+            }
             setLiveSync("error");
           }
         }
@@ -143,10 +154,10 @@ export default function Home() {
     sync();
     const timer = window.setInterval(sync, 30000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [accessReady, authReady, authRequired, emergencyPin, session, refreshKey]);
+  }, [accessReady, authReady, authRequired, emergencyPin, staffToken, session, refreshKey]);
   const submitAction = async (payload: Record<string, unknown>) => {
     try {
-      const response = await fetch("/api/sheets", { method: "POST", headers: { "content-type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}), ...(emergencyPin ? { "x-senza-emergency-pin": emergencyPin } : {}) }, body: JSON.stringify(payload) });
+      const response = await fetch("/api/sheets", { method: "POST", headers: { "content-type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}), ...(emergencyPin ? { "x-senza-emergency-pin": emergencyPin } : {}), ...(staffToken ? { "x-senza-session": staffToken } : {}) }, body: JSON.stringify(payload) });
       const result = await response.json();
       const ok = response.ok && (result.ok !== false) && !result.error;
       if (ok) setRefreshKey((value) => value + 1);
@@ -154,28 +165,32 @@ export default function Home() {
     } catch { return { ok: false, message: "The operations database could not be reached." }; }
   };
   const toggleTheme = () => setTheme((current) => { const next = current === "dark" ? "light" : "dark"; window.localStorage.setItem("senza-theme", next); return next; });
-  if (!accessReady || (!emergencyPin && !authReady)) return <main className="auth-loading">Opening Senza Fine Operations…</main>;
-  if (!emergencyPin && !session) return <EmergencyAccess onAuthorized={setEmergencyPin} />;
-  if (authRequired && !session) return <AuthScreen setupRequired={!isSupabaseConfigured()} />;
-  const displayName = session?.user.user_metadata?.full_name || session?.user.user_metadata?.name || "Lia";
+  if (!accessReady || (!emergencyPin && !staffToken && !authReady)) return <main className="auth-loading">Opening Senza Fine Operations…</main>;
+  const completeStaffLogin = (token: string, user: StaffUser) => { window.sessionStorage.setItem("senza-staff-session", token); window.sessionStorage.setItem("senza-staff-user", JSON.stringify(user)); window.sessionStorage.removeItem("senza-emergency-pin"); setEmergencyPin(""); setStaffToken(token); setStaffUser(user); };
+  const completeRecovery = (pin: string) => { window.sessionStorage.setItem("senza-emergency-pin", pin); window.sessionStorage.removeItem("senza-staff-session"); window.sessionStorage.removeItem("senza-staff-user"); setStaffToken(""); setStaffUser(null); setEmergencyPin(pin); };
+  if (!emergencyPin && !staffToken && !session) return <StaffLogin onLogin={completeStaffLogin} onRecovery={completeRecovery}/>;
+  if (authRequired && !session && !staffToken) return <AuthScreen setupRequired={!isSupabaseConfigured()} />;
+  const displayName = staffUser?.name || session?.user.user_metadata?.full_name || session?.user.user_metadata?.name || "Owner";
   const initial = String(displayName).charAt(0).toUpperCase();
-  const signOut = async () => { await getSupabaseBrowserClient()?.auth.signOut(); };
+  const isOwner = Boolean(emergencyPin) || staffUser?.role === "owner";
+  const signOut = async () => { if (staffToken) await submitAction({ action: "logout" }); await getSupabaseBrowserClient()?.auth.signOut(); window.sessionStorage.removeItem("senza-emergency-pin"); window.sessionStorage.removeItem("senza-staff-session"); window.sessionStorage.removeItem("senza-staff-user"); setEmergencyPin(""); setStaffToken(""); setStaffUser(null); };
   return (
     <main className="app-shell" data-theme={theme}>
       <aside className="sidebar">
         <div className="brand"><img src="/senza-fine-logo.jpeg" alt="Senza Fine"/><div><strong>Senza Fine</strong><span>Operations</span></div></div>
-        <nav>{navItems.map(([label, icon]) => <button key={label} className={section === label ? "active" : ""} onClick={() => setSection(label)}><span>{icon}</span>{label}</button>)}</nav>
+        <nav>{navItems.filter(([label]) => label !== "Users" || isOwner).map(([label, icon]) => <button key={label} className={section === label ? "active" : ""} onClick={() => setSection(label)}><span>{icon}</span>{label}</button>)}</nav>
         <div className="sidebar-footer"><div className="sync"><i className={liveSync}/><div><strong>Operations database</strong><span>{liveSync === "live" ? "Live · refreshes every 30s" : liveSync === "checking" ? "Checking connection…" : liveSync === "snapshot" ? "Recovery snapshot" : "Connection needs attention"}</span></div></div><small>Powered by <b>Azumie</b></small></div>
       </aside>
       <section className="workspace">
-        <header className="topbar"><div><p>Live requests, receiving, usage, and inventory</p><h1>{section === "Overview" ? `Good afternoon, ${String(displayName).split(" ")[0]}` : section}</h1></div><div className="top-actions"><button className="location">⌖ <span>All locations</span>⌄</button><ThemeToggle theme={theme} onToggle={toggleTheme}/><button className="profile" onClick={session ? signOut : undefined} title={session ? "Sign out" : "Owner access"}><span>{initial}</span><div><strong>{displayName}</strong><small>{session ? "Signed in" : "Owner access"}</small></div></button></div></header>
+        <header className="topbar"><div><p>Live requests, receiving, usage, and inventory</p><h1>{section === "Overview" ? `Good afternoon, ${String(displayName).split(" ")[0]}` : section}</h1></div><div className="top-actions"><button className="location">⌖ <span>{staffUser?.department || "All locations"}</span>⌄</button><ThemeToggle theme={theme} onToggle={toggleTheme}/><button className="profile" onClick={signOut} title="Sign out"><span>{initial}</span><div><strong>{displayName}</strong><small>{isOwner ? "Owner" : staffUser?.role === "reviewer" ? "Reviewer" : "Staff"}</small></div></button></div></header>
         <div className="content">
           {section === "Overview" ? <Dashboard data={sheetData} navigate={setSection}/> : null}
           {section === "Inventory" ? <InventoryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Item Usage" ? <UsageView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
-          {section === "Purchasing" ? <PurchasingView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
+          {section === "Purchasing" ? <PurchasingView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)} accessRole={isOwner ? "owner" : staffUser?.role || "staff"} operatorName={displayName}/> : null}
           {section === "Receiving" ? <ReceivingView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Reports" ? <ReportsView data={sheetData}/> : null}
+          {section === "Users" && isOwner ? <UsersView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Expiry & Waste" ? <ExpiryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Daily Operations" ? <DailyOperationsView data={sheetData} submit={submitAction}/> : null}
           {section === "Azumie Insights" ? <InsightsView data={sheetData} navigate={setSection}/> : null}
