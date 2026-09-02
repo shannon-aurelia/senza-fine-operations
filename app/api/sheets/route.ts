@@ -1,9 +1,7 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "../../lib/supabase";
 import recoveredInventory from "../../data/recovered-inventory.json";
 
-const EMERGENCY_PIN_HASH = "31280f6d569c772d1a298233783981ae18f198589027afbd22b18b5aa484cba1";
 const OPERATIONS_STORE_URL = "https://mvfecvoozjwhmppqgued.supabase.co/functions/v1/senza-fine-ops";
 
 export const dynamic = "force-dynamic";
@@ -23,14 +21,6 @@ async function authorize(request: NextRequest, write = false) {
   }
 
   if (request.headers.get("x-senza-session")) return { ok: true, email: "", role: "session" };
-  const emergencyPin = request.headers.get("x-senza-emergency-pin");
-  if (emergencyPin) {
-    const supplied = createHash("sha256").update(emergencyPin.trim().toUpperCase()).digest();
-    const expected = Buffer.from(EMERGENCY_PIN_HASH, "hex");
-    if (supplied.length === expected.length && timingSafeEqual(supplied, expected)) {
-      return { ok: true, email: "owner-recovery@senza-fine.local", role: "owner" };
-    }
-  }
   return { ok: false, status: 401, error: "Sign in is required." };
 }
 
@@ -44,7 +34,6 @@ async function operationsFetch(request: NextRequest, payload?: unknown) {
     method: payload ? "POST" : "GET",
     headers: {
       ...(authorization ? { authorization } : {}),
-      "x-senza-emergency-pin": request.headers.get("x-senza-emergency-pin") || "",
       "x-senza-session": request.headers.get("x-senza-session") || "",
       ...(payload ? { "content-type": "application/json" } : {}),
     },
@@ -78,7 +67,7 @@ export async function POST(request: NextRequest) {
   }
   const auth = await authorize(request, true);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
-  const allowed = ["stockOut", "purchaseRequest", "reviewPurchase", "approvePurchase", "markOrdered", "deletePurchase", "receivePurchase", "dailyIssue", "createItem", "saveUser", "changePassword", "logout"];
+  const allowed = ["stockOut", "purchaseRequest", "reviewPurchase", "approvePurchase", "markOrdered", "deletePurchase", "receivePurchase", "dailyIssue", "createItem", "saveUser", "inviteUser", "changePassword", "logout"];
   if (!allowed.includes(payload?.action)) return NextResponse.json({ error: "Unsupported action." }, { status: 400 });
   try {
     const response = await operationsFetch(request, { ...payload, actorEmail: auth.email, actorRole: auth.role });

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import AuthScreen from "./components/auth-screen";
 import StaffLogin, { StaffUser } from "./components/staff-login";
-import { DailyOperationsView, daysUntil, ExpiryView, InsightsView, InventoryView, normalizeSheetData, PurchasingView, ReceivingView, ReportsView, SheetData, UsageView, UsersView } from "./components/operations";
+import { CatalogView, DailyOperationsView, daysUntil, ExpiryView, InsightsView, InventoryView, InviteUserView, normalizeSheetData, PurchasingView, ReceivingView, ReportsView, SheetData, UsageView, UsersView } from "./components/operations";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "./lib/supabase";
 
 type Theme = "dark" | "light";
@@ -12,11 +12,13 @@ type Theme = "dark" | "light";
 const navItems = [
   ["Overview", "⌂"],
   ["Inventory", "▣"],
+  ["Items & Categories", "+"],
   ["Item Usage", "−"],
   ["Purchasing", "▤"],
   ["Receiving", "↓"],
   ["Reports", "▥"],
   ["Users", "♙"],
+  ["Create User", "+"],
   ["Expiry & Waste", "◷"],
   ["Daily Operations", "✓"],
   ["Azumie Insights", "✦"],
@@ -98,7 +100,7 @@ export default function Home() {
   const [emergencyPin, setEmergencyPin] = useState("");
   const [staffToken, setStaffToken] = useState("");
   const [staffUser, setStaffUser] = useState<StaffUser | null>(null);
-  const [sheetData, setSheetData] = useState<SheetData>({ inventory: [], catalog: [], purchases: [], usage: [], receipts: [], users: [], names: [], locs: ["Soho", "Outlet"], reasons: ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"] });
+  const [sheetData, setSheetData] = useState<SheetData>({ inventory: [], catalog: [], purchases: [], usage: [], receipts: [], users: [], names: [], locs: ["Soho", "Outlet"], reasons: ["Used", "Expired", "Spoiled", "Spilled", "Damaged", "Other"], currentUser: null });
   const [refreshKey, setRefreshKey] = useState(0);
   const authRequired = false;
   useEffect(() => {
@@ -183,15 +185,15 @@ export default function Home() {
   if (!accessReady || (!emergencyPin && !staffToken && !authReady)) return <main className="auth-loading">Opening Senza Fine Operations…</main>;
   if (!emergencyPin && !staffToken && !session) return <StaffLogin/>;
   if (authRequired && !session && !staffToken) return <AuthScreen setupRequired={!isSupabaseConfigured()} />;
-  const displayName = staffUser?.name || session?.user.user_metadata?.full_name || session?.user.user_metadata?.name || "Owner";
+  const displayName = sheetData.currentUser?.name || staffUser?.name || session?.user.user_metadata?.full_name || session?.user.user_metadata?.name || "Owner";
   const initial = String(displayName).charAt(0).toUpperCase();
-  const isOwner = Boolean(emergencyPin) || staffUser?.role === "owner" || session?.user.email?.toLowerCase() === "aureliawwshan@gmail.com";
+  const isOwner = Boolean(emergencyPin) || sheetData.currentUser?.role === "owner" || staffUser?.role === "owner" || session?.user.email?.toLowerCase() === "aureliawwshan@gmail.com";
   const signOut = async () => { if (staffToken) await submitAction({ action: "logout" }); await getSupabaseBrowserClient()?.auth.signOut(); window.sessionStorage.removeItem("senza-emergency-pin"); window.sessionStorage.removeItem("senza-staff-session"); window.sessionStorage.removeItem("senza-staff-user"); setEmergencyPin(""); setStaffToken(""); setStaffUser(null); };
   return (
     <main className="app-shell" data-theme={theme}>
       <aside className="sidebar">
         <div className="brand"><img src="/senza-fine-logo.jpeg" alt="Senza Fine"/><div><strong>Senza Fine</strong><span>Operations</span></div></div>
-        <nav>{navItems.filter(([label]) => label !== "Users" || isOwner).map(([label, icon]) => <button key={label} className={section === label ? "active" : ""} onClick={() => setSection(label)}><span>{icon}</span>{label}</button>)}</nav>
+        <nav>{navItems.filter(([label]) => !["Users", "Create User"].includes(label) || isOwner).map(([label, icon]) => <button key={label} className={section === label ? "active" : ""} onClick={() => setSection(label)}><span>{icon}</span>{label}</button>)}</nav>
         <div className="sidebar-footer"><div className="sync"><i className={liveSync}/><div><strong>Operations database</strong><span>{liveSync === "live" ? "Live · refreshes every 30s" : liveSync === "checking" ? "Checking connection…" : liveSync === "snapshot" ? "Recovery snapshot" : "Connection needs attention"}</span></div></div><small>Powered by <b>Azumie</b></small></div>
       </aside>
       <section className="workspace">
@@ -199,11 +201,13 @@ export default function Home() {
         <div className="content">
           {section === "Overview" ? <Dashboard data={sheetData} navigate={setSection}/> : null}
           {section === "Inventory" ? <InventoryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
+          {section === "Items & Categories" ? <CatalogView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Item Usage" ? <UsageView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
-          {section === "Purchasing" ? <PurchasingView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)} accessRole={isOwner ? "owner" : staffUser?.role || "staff"} operatorName={displayName}/> : null}
+          {section === "Purchasing" ? <PurchasingView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)} accessRole={isOwner ? "owner" : sheetData.currentUser?.role || staffUser?.role || "staff"} operatorName={displayName} operatorDepartment={sheetData.currentUser?.department || staffUser?.department || (isOwner ? "Owner" : "Staff")} operatorEmail={sheetData.currentUser?.email || staffUser?.email || session?.user.email || ""}/> : null}
           {section === "Receiving" ? <ReceivingView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Reports" ? <ReportsView data={sheetData}/> : null}
           {section === "Users" && isOwner ? <UsersView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
+          {section === "Create User" && isOwner ? <InviteUserView submit={submitAction}/> : null}
           {section === "Expiry & Waste" ? <ExpiryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Daily Operations" ? <DailyOperationsView data={sheetData} submit={submitAction}/> : null}
           {section === "Azumie Insights" ? <InsightsView data={sheetData} navigate={setSection}/> : null}
