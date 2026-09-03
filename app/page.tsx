@@ -186,6 +186,7 @@ export default function Home() {
   if (!emergencyPin && !staffToken && !session) return <StaffLogin/>;
   if (authRequired && !session && !staffToken) return <AuthScreen setupRequired={!isSupabaseConfigured()} />;
   const displayName = sheetData.currentUser?.name || staffUser?.name || session?.user.user_metadata?.full_name || session?.user.user_metadata?.name || "Owner";
+  const operatorDepartment = sheetData.currentUser?.department || staffUser?.department || "Owner";
   const initial = String(displayName).charAt(0).toUpperCase();
   const isOwner = Boolean(emergencyPin) || sheetData.currentUser?.role === "owner" || staffUser?.role === "owner" || session?.user.email?.toLowerCase() === "aureliawwshan@gmail.com";
   const signOut = async () => { if (staffToken) await submitAction({ action: "logout" }); await getSupabaseBrowserClient()?.auth.signOut(); window.sessionStorage.removeItem("senza-emergency-pin"); window.sessionStorage.removeItem("senza-staff-session"); window.sessionStorage.removeItem("senza-staff-user"); setEmergencyPin(""); setStaffToken(""); setStaffUser(null); };
@@ -200,16 +201,16 @@ export default function Home() {
         <header className="topbar"><div><p>Live requests, receiving, usage, and inventory</p><h1>{section === "Overview" ? `Good afternoon, ${String(displayName).split(" ")[0]}` : section}</h1></div><div className="top-actions"><button className="location">⌖ <span>{staffUser?.department || "All locations"}</span>⌄</button><ThemeToggle theme={theme} onToggle={toggleTheme}/><button className="profile" onClick={signOut} title="Sign out"><span>{initial}</span><div><strong>{displayName}</strong><small>{isOwner ? "Owner" : staffUser?.role === "reviewer" ? "Reviewer" : "Staff"}</small></div></button></div></header>
         <div className="content">
           {section === "Overview" ? <Dashboard data={sheetData} navigate={setSection}/> : null}
-          {section === "Inventory" ? <InventoryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
+          {section === "Inventory" ? <InventoryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)} operatorName={displayName} operatorDepartment={operatorDepartment}/> : null}
           {section === "Items & Categories" ? <CatalogView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
-          {section === "Item Usage" ? <UsageView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
+          {section === "Item Usage" ? <UsageView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)} operatorName={displayName} operatorDepartment={operatorDepartment}/> : null}
           {section === "Purchasing" ? <PurchasingView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)} accessRole={isOwner ? "owner" : sheetData.currentUser?.role || staffUser?.role || "staff"} operatorName={displayName} operatorDepartment={sheetData.currentUser?.department || staffUser?.department || (isOwner ? "Owner" : "Staff")} operatorEmail={sheetData.currentUser?.email || staffUser?.email || session?.user.email || ""}/> : null}
-          {section === "Receiving" ? <ReceivingView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
+          {section === "Receiving" ? <ReceivingView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)} operatorName={displayName}/> : null}
           {section === "Reports" ? <ReportsView data={sheetData}/> : null}
           {section === "Users" && isOwner ? <UsersView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
           {section === "Create User" && isOwner ? <InviteUserView submit={submitAction}/> : null}
-          {section === "Expiry & Waste" ? <ExpiryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)}/> : null}
-          {section === "Daily Operations" ? <DailyOperationsView data={sheetData} submit={submitAction}/> : null}
+          {section === "Expiry & Waste" ? <ExpiryView data={sheetData} submit={submitAction} onRefresh={() => setRefreshKey((value) => value + 1)} operatorName={displayName}/> : null}
+          {section === "Daily Operations" ? <DailyOperationsView data={sheetData} submit={submitAction} operatorName={displayName} operatorDepartment={operatorDepartment}/> : null}
           {section === "Azumie Insights" ? <InsightsView data={sheetData} navigate={setSection}/> : null}
         </div>
       </section>
