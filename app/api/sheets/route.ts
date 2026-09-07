@@ -9,19 +9,26 @@ export const dynamic = "force-dynamic";
 async function authorize(request: NextRequest, write = false) {
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   const supabase = getSupabaseServerClient();
-  if (token && supabase) {
-    const { data, error } = await supabase.auth.getUser(token);
-    if (error || !data.user) return { ok: false, status: 401, error: "Your session is no longer valid." };
-    const { data: profile } = await supabase.from("sf_auth_profiles").select("email, name, department, role, active").eq("id", data.user.id).eq("app_scope", "senza-fine").single();
-    if (!profile?.active) return { ok: false, status: 403, error: "Your Senza Fine account is waiting for Owner approval." };
-    if (write && !["owner", "reviewer", "staff"].includes(profile.role)) {
-      return { ok: false, status: 403, error: "You do not have permission for this action." };
-    }
-    return { ok: true, email: profile.email, role: profile.role, profile, token };
+  if (!token || !supabase) return { ok: false, status: 401, error: "Sign in is required." } as const;
+
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user) return { ok: false, status: 401, error: "Your session is no longer valid." } as const;
+
+  const { data: profile } = await supabase
+    .from("sf_auth_profiles")
+    .select("email, name, department, role, active")
+    .eq("id", data.user.id)
+    .eq("app_scope", "senza-fine")
+    .single();
+
+  if (!profile?.active) {
+    return { ok: false, status: 403, error: "Your Senza Fine account is waiting for Owner approval." } as const;
+  }
+  if (write && !["owner", "reviewer", "staff"].includes(profile.role)) {
+    return { ok: false, status: 403, error: "You do not have permission for this action." } as const;
   }
 
-  if (request.headers.get("x-senza-session")) return { ok: true, email: "", role: "session" };
-  return { ok: false, status: 401, error: "Sign in is required." };
+  return { ok: true, email: profile.email, role: profile.role, profile, token } as const;
 }
 
 function recoveredSnapshot(reason: string) {
@@ -62,8 +69,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const payload = await request.json();
   if (payload?.action === "login") {
-    const response = await operationsFetch(request, payload);
-    return NextResponse.json(await response.json(), { status: response.status });
+    return NextResponse.json({ ok: false, error: "Password login is handled by Supabase Auth." }, { status: 410 });
   }
   const auth = await authorize(request, true);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
